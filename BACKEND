@@ -1,0 +1,1331 @@
+// ============================================================
+// GHRN — NestJS Backend (Full Source)
+// File layout shown as path comments above each block
+// ============================================================
+
+// ─────────────────────────────────────────────────────────────
+// src/main.ts
+// ─────────────────────────────────────────────────────────────
+import { NestFactory } from '@nestjs/core';
+import { ValidationPipe, VersioningType } from '@nestjs/common';
+import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
+import { AppModule } from './app.module';
+import helmet from 'helmet';
+import * as compression from 'compression';
+import { HttpExceptionFilter } from './common/filters/http-exception.filter';
+import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
+import { TransformInterceptor } from './common/interceptors/transform.interceptor';
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule, {
+    logger: ['error', 'warn', 'log'],
+  });
+
+  // Security
+  app.use(helmet());
+  app.use(compression());
+  app.enableCors({
+    origin: process.env.ALLOWED_ORIGINS?.split(',') ?? ['http://localhost:3000'],
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  });
+
+  // Versioning
+  app.enableVersioning({ type: VersioningType.URI });
+  app.setGlobalPrefix('api');
+
+  // Pipes / Filters / Interceptors
+  app.useGlobalPipes(new ValidationPipe({
+    whitelist: true,
+    forbidNonWhitelisted: true,
+    transform: true,
+    transformOptions: { enableImplicitConversion: true },
+  }));
+  app.useGlobalFilters(new HttpExceptionFilter());
+  app.useGlobalInterceptors(new LoggingInterceptor(), new TransformInterceptor());
+
+  // Swagger (disabled in production)
+  if (process.env.NODE_ENV !== 'production') {
+    const config = new DocumentBuilder()
+      .setTitle('GHRN API')
+      .setDescription('Global Humanitarian Relief Network REST API')
+      .setVersion('1.0')
+      .addBearerAuth()
+      .build();
+    SwaggerModule.setup('docs', app, SwaggerModule.createDocument(app, config));
+  }
+
+  await app.listen(process.env.PORT ?? 3001);
+  console.log(`GHRN API running on port ${process.env.PORT ?? 3001}`);
+}
+bootstrap();
+
+
+// ─────────────────────────────────────────────────────────────
+// src/app.module.ts
+// ─────────────────────────────────────────────────────────────
+import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
+import { ThrottlerModule } from '@nestjs/throttler';
+import { ScheduleModule } from '@nestjs/schedule';
+import { PrismaModule } from './prisma/prisma.module';
+import { RedisModule } from './redis/redis.module';
+import { AuthModule } from './auth/auth.module';
+import { UsersModule } from './users/users.module';
+import { NGOModule } from './ngo/ngo.module';
+import { CampaignsModule } from './campaigns/campaigns.module';
+import { DonationsModule } from './donations/donations.module';
+import { PaymentsModule } from './payments/payments.module';
+import { TransparencyModule } from './transparency/transparency.module';
+import { AdminModule } from './admin/admin.module';
+import { StorageModule } from './storage/storage.module';
+import { NotificationsModule } from './notifications/notifications.module';
+import { AuditModule } from './audit/audit.module';
+import { HealthModule } from './health/health.module';
+import appConfig from './config/app.config';
+import databaseConfig from './config/database.config';
+
+@Module({
+  imports: [
+    ConfigModule.forRoot({ isGlobal: true, load: [appConfig, databaseConfig] }),
+    ThrottlerModule.forRoot([{ ttl: 60000, limit: 100 }]),
+    ScheduleModule.forRoot(),
+    PrismaModule,
+    RedisModule,
+    AuthModule,
+    UsersModule,
+    NGOModule,
+    CampaignsModule,
+    DonationsModule,
+    PaymentsModule,
+    TransparencyModule,
+    AdminModule,
+    StorageModule,
+    NotificationsModule,
+    AuditModule,
+    HealthModule,
+  ],
+})
+export class AppModule {}
+
+
+// ─────────────────────────────────────────────────────────────
+// src/prisma/prisma.service.ts
+// ─────────────────────────────────────────────────────────────
+import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import { PrismaClient } from '@prisma/client';
+
+@Injectable()
+export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
+  async onModuleInit() {
+    await this.$connect();
+  }
+  async onModuleDestroy() {
+    await this.$disconnect();
+  }
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// src/redis/redis.service.ts
+// ─────────────────────────────────────────────────────────────
+import { Injectable, OnModuleDestroy } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import Redis from 'ioredis';
+
+@Injectable()
+export class RedisService implements OnModuleDestroy {
+  private client: Redis;
+
+  constructor(private config: ConfigService) {
+    this.client = new Redis({
+      host: config.get('REDIS_HOST', 'localhost'),
+      port: config.get<number>('REDIS_PORT', 6379),
+      password: config.get('REDIS_PASSWORD'),
+      tls: config.get('REDIS_TLS') === 'true' ? {} : undefined,
+    });
+  }
+
+  async get(key: string): Promise<string | null> {
+    return this.client.get(key);
+  }
+
+  async set(key: string, value: string, ttlSeconds?: number): Promise<void> {
+    if (ttlSeconds) await this.client.setex(key, ttlSeconds, value);
+    else await this.client.set(key, value);
+  }
+
+  async del(key: string): Promise<void> {
+    await this.client.del(key);
+  }
+
+  async increment(key: string): Promise<number> {
+    return this.client.incr(key);
+  }
+
+  onModuleDestroy() {
+    this.client.disconnect();
+  }
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// src/auth/auth.module.ts
+// ─────────────────────────────────────────────────────────────
+import { Module } from '@nestjs/common';
+import { JwtModule } from '@nestjs/jwt';
+import { PassportModule } from '@nestjs/passport';
+import { ConfigService } from '@nestjs/config';
+import { AuthService } from './auth.service';
+import { AuthController } from './auth.controller';
+import { JwtStrategy } from './strategies/jwt.strategy';
+import { GoogleStrategy } from './strategies/google.strategy';
+import { UsersModule } from '../users/users.module';
+
+@Module({
+  imports: [
+    PassportModule,
+    JwtModule.registerAsync({
+      inject: [ConfigService],
+      useFactory: (cfg: ConfigService) => ({
+        secret: cfg.get('JWT_SECRET'),
+        signOptions: { expiresIn: cfg.get('JWT_EXPIRES_IN', '15m') },
+      }),
+    }),
+    UsersModule,
+  ],
+  controllers: [AuthController],
+  providers: [AuthService, JwtStrategy, GoogleStrategy],
+  exports: [AuthService],
+})
+export class AuthModule {}
+
+
+// ─────────────────────────────────────────────────────────────
+// src/auth/auth.service.ts
+// ─────────────────────────────────────────────────────────────
+import {
+  Injectable, UnauthorizedException, ConflictException,
+  BadRequestException, ForbiddenException,
+} from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
+import { ConfigService } from '@nestjs/config';
+import * as bcrypt from 'bcryptjs';
+import * as speakeasy from 'speakeasy';
+import { v4 as uuid } from 'uuid';
+import { PrismaService } from '../prisma/prisma.service';
+import { RedisService } from '../redis/redis.service';
+import { AuditService } from '../audit/audit.service';
+import { RegisterDto } from './dto/register.dto';
+import { LoginDto } from './dto/login.dto';
+import { UserRole } from '@prisma/client';
+
+@Injectable()
+export class AuthService {
+  constructor(
+    private prisma: PrismaService,
+    private jwt: JwtService,
+    private config: ConfigService,
+    private redis: RedisService,
+    private audit: AuditService,
+  ) {}
+
+  async register(dto: RegisterDto, ip: string) {
+    const exists = await this.prisma.user.findUnique({ where: { email: dto.email } });
+    if (exists) throw new ConflictException('Email already registered');
+
+    const passwordHash = await bcrypt.hash(dto.password, 12);
+    const emailVerifyToken = uuid();
+
+    const user = await this.prisma.user.create({
+      data: {
+        email: dto.email,
+        firstName: dto.firstName,
+        lastName: dto.lastName,
+        passwordHash,
+        emailVerifyToken,
+        role: UserRole.DONOR,
+      },
+    });
+
+    await this.audit.log({ action: 'USER_CREATED', entityType: 'User', entityId: user.id, actorId: user.id, ipAddress: ip });
+    // TODO: send verification email via NotificationsService
+    return { message: 'Registration successful. Please verify your email.' };
+  }
+
+  async login(dto: LoginDto, ip: string) {
+    const user = await this.prisma.user.findUnique({ where: { email: dto.email } });
+    if (!user || !user.passwordHash) throw new UnauthorizedException('Invalid credentials');
+    if (user.status === 'SUSPENDED' || user.status === 'BANNED')
+      throw new ForbiddenException('Account is suspended');
+
+    const valid = await bcrypt.compare(dto.password, user.passwordHash);
+    if (!valid) throw new UnauthorizedException('Invalid credentials');
+
+    if (!user.emailVerified) throw new ForbiddenException('Please verify your email first');
+
+    // 2FA check for NGO/Admin
+    if (user.twoFactorEnabled) {
+      if (!dto.totpCode) return { requiresTwoFactor: true };
+      const valid2fa = speakeasy.totp.verify({
+        secret: user.twoFactorSecret!,
+        encoding: 'base32',
+        token: dto.totpCode,
+        window: 1,
+      });
+      if (!valid2fa) throw new UnauthorizedException('Invalid 2FA code');
+    }
+
+    const tokens = await this.generateTokens(user.id, user.role, user.email);
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: { lastLoginAt: new Date(), lastLoginIp: ip },
+    });
+    await this.audit.log({ action: 'ADMIN_LOGIN', entityType: 'User', entityId: user.id, actorId: user.id, ipAddress: ip });
+    return tokens;
+  }
+
+  async refreshToken(refreshToken: string) {
+    const cached = await this.redis.get(`refresh:${refreshToken}`);
+    if (!cached) throw new UnauthorizedException('Invalid or expired refresh token');
+    const payload = JSON.parse(cached);
+    return this.generateTokens(payload.userId, payload.role, payload.email);
+  }
+
+  async logout(userId: string, refreshToken: string) {
+    await this.redis.del(`refresh:${refreshToken}`);
+  }
+
+  async verifyEmail(token: string) {
+    const user = await this.prisma.user.findUnique({ where: { emailVerifyToken: token } });
+    if (!user) throw new BadRequestException('Invalid verification token');
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: { emailVerified: true, emailVerifyToken: null, status: 'ACTIVE' },
+    });
+    return { message: 'Email verified successfully' };
+  }
+
+  async setup2FA(userId: string) {
+    const secret = speakeasy.generateSecret({ name: 'GHRN', issuer: 'GHRN' });
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { twoFactorSecret: secret.base32 },
+    });
+    return { otpauthUrl: secret.otpauth_url, secret: secret.base32 };
+  }
+
+  async confirm2FA(userId: string, code: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user?.twoFactorSecret) throw new BadRequestException('2FA setup not initiated');
+    const valid = speakeasy.totp.verify({ secret: user.twoFactorSecret, encoding: 'base32', token: code });
+    if (!valid) throw new BadRequestException('Invalid TOTP code');
+    await this.prisma.user.update({ where: { id: userId }, data: { twoFactorEnabled: true } });
+    return { message: '2FA enabled successfully' };
+  }
+
+  private async generateTokens(userId: string, role: string, email: string) {
+    const payload = { sub: userId, role, email };
+    const accessToken = this.jwt.sign(payload, { expiresIn: '15m' });
+    const refreshToken = uuid();
+    await this.redis.set(`refresh:${refreshToken}`, JSON.stringify({ userId, role, email }), 60 * 60 * 24 * 7);
+    return { accessToken, refreshToken, tokenType: 'Bearer' };
+  }
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// src/auth/auth.controller.ts
+// ─────────────────────────────────────────────────────────────
+import { Controller, Post, Get, Body, Req, Param, UseGuards, Version } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
+import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
+import { AuthService } from './auth.service';
+import { RegisterDto } from './dto/register.dto';
+import { LoginDto } from './dto/login.dto';
+import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { CurrentUser } from './decorators/current-user.decorator';
+
+@ApiTags('Auth')
+@Controller({ path: 'auth', version: '1' })
+export class AuthController {
+  constructor(private auth: AuthService) {}
+
+  @Post('register')
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
+  register(@Body() dto: RegisterDto, @Req() req: any) {
+    return this.auth.register(dto, req.ip);
+  }
+
+  @Post('login')
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
+  login(@Body() dto: LoginDto, @Req() req: any) {
+    return this.auth.login(dto, req.ip);
+  }
+
+  @Post('refresh')
+  refresh(@Body('refreshToken') token: string) {
+    return this.auth.refreshToken(token);
+  }
+
+  @Post('logout')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  logout(@CurrentUser() user: any, @Body('refreshToken') token: string) {
+    return this.auth.logout(user.id, token);
+  }
+
+  @Get('verify-email/:token')
+  verifyEmail(@Param('token') token: string) {
+    return this.auth.verifyEmail(token);
+  }
+
+  @Post('2fa/setup')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  setup2FA(@CurrentUser() user: any) {
+    return this.auth.setup2FA(user.id);
+  }
+
+  @Post('2fa/confirm')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  confirm2FA(@CurrentUser() user: any, @Body('code') code: string) {
+    return this.auth.confirm2FA(user.id, code);
+  }
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// src/auth/dto/register.dto.ts
+// ─────────────────────────────────────────────────────────────
+import { IsEmail, IsString, MinLength, MaxLength, IsOptional } from 'class-validator';
+
+export class RegisterDto {
+  @IsEmail() email: string;
+  @IsString() @MinLength(2) @MaxLength(60) firstName: string;
+  @IsString() @MinLength(2) @MaxLength(60) lastName: string;
+  @IsString() @MinLength(8) @MaxLength(128) password: string;
+}
+
+export class LoginDto {
+  @IsEmail() email: string;
+  @IsString() password: string;
+  @IsOptional() @IsString() totpCode?: string;
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// src/auth/strategies/jwt.strategy.ts
+// ─────────────────────────────────────────────────────────────
+import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { PassportStrategy } from '@nestjs/passport';
+import { ExtractJwt, Strategy } from 'passport-jwt';
+import { ConfigService } from '@nestjs/config';
+import { PrismaService } from '../../prisma/prisma.service';
+
+@Injectable()
+export class JwtStrategy extends PassportStrategy(Strategy) {
+  constructor(config: ConfigService, private prisma: PrismaService) {
+    super({
+      jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
+      secretOrKey: config.get('JWT_SECRET'),
+    });
+  }
+
+  async validate(payload: { sub: string; role: string }) {
+    const user = await this.prisma.user.findUnique({ where: { id: payload.sub } });
+    if (!user || user.status === 'BANNED' || user.status === 'SUSPENDED')
+      throw new UnauthorizedException();
+    return { id: user.id, email: user.email, role: user.role };
+  }
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// src/auth/guards/jwt-auth.guard.ts
+// ─────────────────────────────────────────────────────────────
+import { Injectable } from '@nestjs/common';
+import { AuthGuard } from '@nestjs/passport';
+@Injectable()
+export class JwtAuthGuard extends AuthGuard('jwt') {}
+
+
+// ─────────────────────────────────────────────────────────────
+// src/auth/guards/roles.guard.ts
+// ─────────────────────────────────────────────────────────────
+import { Injectable, CanActivate, ExecutionContext, ForbiddenException } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
+
+@Injectable()
+export class RolesGuard implements CanActivate {
+  constructor(private reflector: Reflector) {}
+
+  canActivate(ctx: ExecutionContext): boolean {
+    const roles = this.reflector.getAllAndOverride<string[]>('roles', [ctx.getHandler(), ctx.getClass()]);
+    if (!roles?.length) return true;
+    const { user } = ctx.switchToHttp().getRequest();
+    if (!roles.includes(user?.role)) throw new ForbiddenException('Insufficient permissions');
+    return true;
+  }
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// src/auth/decorators/current-user.decorator.ts
+// ─────────────────────────────────────────────────────────────
+import { createParamDecorator, ExecutionContext } from '@nestjs/common';
+export const CurrentUser = createParamDecorator((_: unknown, ctx: ExecutionContext) =>
+  ctx.switchToHttp().getRequest().user
+);
+
+export const Roles = (...roles: string[]) => SetMetadata('roles', roles);
+import { SetMetadata } from '@nestjs/common';
+
+
+// ─────────────────────────────────────────────────────────────
+// src/campaigns/campaigns.service.ts
+// ─────────────────────────────────────────────────────────────
+import {
+  Injectable, NotFoundException, ForbiddenException,
+  BadRequestException,
+} from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
+import { RedisService } from '../redis/redis.service';
+import { AuditService } from '../audit/audit.service';
+import { CreateCampaignDto } from './dto/create-campaign.dto';
+import { UpdateCampaignDto } from './dto/update-campaign.dto';
+import { CampaignQueryDto } from './dto/campaign-query.dto';
+import { Prisma } from '@prisma/client';
+
+const CACHE_TTL = 60; // seconds
+
+@Injectable()
+export class CampaignsService {
+  constructor(
+    private prisma: PrismaService,
+    private redis: RedisService,
+    private audit: AuditService,
+  ) {}
+
+  async findAll(query: CampaignQueryDto) {
+    const cacheKey = `campaigns:list:${JSON.stringify(query)}`;
+    const cached = await this.redis.get(cacheKey);
+    if (cached) return JSON.parse(cached);
+
+    const where: Prisma.CampaignWhereInput = {
+      status: 'ACTIVE',
+      deletedAt: null,
+      ...(query.region && { region: query.region }),
+      ...(query.category && { category: query.category as any }),
+      ...(query.urgency && { urgency: query.urgency as any }),
+      ...(query.search && {
+        OR: [
+          { title: { contains: query.search, mode: 'insensitive' } },
+          { shortSummary: { contains: query.search, mode: 'insensitive' } },
+        ],
+      }),
+    };
+
+    const [data, total] = await this.prisma.$transaction([
+      this.prisma.campaign.findMany({
+        where,
+        include: { ngo: { select: { organizationName: true, country: true } } },
+        orderBy: [{ isFeatured: 'desc' }, { urgency: 'desc' }, { createdAt: 'desc' }],
+        skip: (query.page - 1) * query.limit,
+        take: query.limit,
+      }),
+      this.prisma.campaign.count({ where }),
+    ]);
+
+    const result = { data, total, page: query.page, limit: query.limit };
+    await this.redis.set(cacheKey, JSON.stringify(result), CACHE_TTL);
+    return result;
+  }
+
+  async findOne(slug: string) {
+    const cacheKey = `campaigns:${slug}`;
+    const cached = await this.redis.get(cacheKey);
+    if (cached) return JSON.parse(cached);
+
+    const campaign = await this.prisma.campaign.findUnique({
+      where: { slug, deletedAt: null },
+      include: {
+        ngo: { select: { organizationName: true, country: true, status: true } },
+        impactReports: { where: { isPublished: true }, orderBy: { publishedAt: 'desc' }, take: 5 },
+        fundAllocations: { where: { isPublic: true }, orderBy: { allocatedAt: 'desc' }, take: 10 },
+        updates: { orderBy: { publishedAt: 'desc' }, take: 5 },
+      },
+    });
+    if (!campaign) throw new NotFoundException('Campaign not found');
+
+    await this.redis.set(cacheKey, JSON.stringify(campaign), CACHE_TTL);
+    return campaign;
+  }
+
+  async create(ngoId: string, userId: string, dto: CreateCampaignDto) {
+    const ngo = await this.prisma.nGO.findUnique({ where: { id: ngoId } });
+    if (!ngo || ngo.status !== 'APPROVED') throw new ForbiddenException('NGO not approved');
+
+    const slug = this.slugify(dto.title);
+    const existing = await this.prisma.campaign.findUnique({ where: { slug } });
+    if (existing) throw new BadRequestException('Campaign title already exists');
+
+    const campaign = await this.prisma.campaign.create({
+      data: { ...dto, ngoId, slug, status: 'PENDING_APPROVAL' },
+    });
+
+    await this.audit.log({ action: 'CAMPAIGN_CREATED', entityType: 'Campaign', entityId: campaign.id, actorId: userId });
+    return campaign;
+  }
+
+  async update(id: string, ngoId: string, dto: UpdateCampaignDto) {
+    const campaign = await this.prisma.campaign.findUnique({ where: { id } });
+    if (!campaign) throw new NotFoundException();
+    if (campaign.ngoId !== ngoId) throw new ForbiddenException();
+
+    // Invalidate cache
+    await this.redis.del(`campaigns:${campaign.slug}`);
+    return this.prisma.campaign.update({ where: { id }, data: dto });
+  }
+
+  async approve(id: string, adminId: string) {
+    const campaign = await this.prisma.campaign.findUnique({ where: { id } });
+    if (!campaign) throw new NotFoundException();
+
+    const updated = await this.prisma.campaign.update({
+      where: { id },
+      data: { status: 'ACTIVE', approvedAt: new Date(), approvedBy: adminId },
+    });
+    await this.audit.log({ action: 'CAMPAIGN_APPROVED', entityType: 'Campaign', entityId: id, actorId: adminId });
+    return updated;
+  }
+
+  async reject(id: string, adminId: string, reason: string) {
+    const updated = await this.prisma.campaign.update({
+      where: { id },
+      data: { status: 'REJECTED', rejectionReason: reason },
+    });
+    await this.audit.log({ action: 'CAMPAIGN_REJECTED', entityType: 'Campaign', entityId: id, actorId: adminId });
+    return updated;
+  }
+
+  private slugify(title: string): string {
+    return title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')
+      + '-' + Date.now().toString(36);
+  }
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// src/campaigns/campaigns.controller.ts
+// ─────────────────────────────────────────────────────────────
+import {
+  Controller, Get, Post, Put, Patch, Delete, Body, Param,
+  Query, UseGuards, Req,
+} from '@nestjs/common';
+import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
+import { CampaignsService } from './campaigns.service';
+import { CreateCampaignDto } from './dto/create-campaign.dto';
+import { UpdateCampaignDto } from './dto/update-campaign.dto';
+import { CampaignQueryDto } from './dto/campaign-query.dto';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles, CurrentUser } from '../auth/decorators/current-user.decorator';
+
+@ApiTags('Campaigns')
+@Controller({ path: 'campaigns', version: '1' })
+export class CampaignsController {
+  constructor(private svc: CampaignsService) {}
+
+  // Public
+  @Get()
+  findAll(@Query() query: CampaignQueryDto) {
+    return this.svc.findAll(query);
+  }
+
+  @Get(':slug')
+  findOne(@Param('slug') slug: string) {
+    return this.svc.findOne(slug);
+  }
+
+  // NGO Protected
+  @Post()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('NGO')
+  @ApiBearerAuth()
+  create(@CurrentUser() user: any, @Body() dto: CreateCampaignDto) {
+    return this.svc.create(user.ngoId, user.id, dto);
+  }
+
+  @Put(':id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('NGO')
+  @ApiBearerAuth()
+  update(@Param('id') id: string, @CurrentUser() user: any, @Body() dto: UpdateCampaignDto) {
+    return this.svc.update(id, user.ngoId, dto);
+  }
+
+  // Admin Protected
+  @Patch(':id/approve')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'SUPERADMIN')
+  @ApiBearerAuth()
+  approve(@Param('id') id: string, @CurrentUser() user: any) {
+    return this.svc.approve(id, user.id);
+  }
+
+  @Patch(':id/reject')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'SUPERADMIN')
+  @ApiBearerAuth()
+  reject(@Param('id') id: string, @CurrentUser() user: any, @Body('reason') reason: string) {
+    return this.svc.reject(id, user.id, reason);
+  }
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// src/campaigns/dto/create-campaign.dto.ts
+// ─────────────────────────────────────────────────────────────
+import { IsString, IsNumber, IsEnum, IsOptional, IsDateString, MinLength, MaxLength, Min } from 'class-validator';
+import { CampaignCategory, UrgencyLevel } from '@prisma/client';
+
+export class CreateCampaignDto {
+  @IsString() @MinLength(10) @MaxLength(150) title: string;
+  @IsString() @MinLength(100) description: string;
+  @IsString() @MaxLength(300) shortSummary: string;
+  @IsEnum(CampaignCategory) category: CampaignCategory;
+  @IsEnum(UrgencyLevel) urgency: UrgencyLevel;
+  @IsString() country: string;
+  @IsOptional() @IsString() region?: string;
+  @IsNumber() @Min(1000) goalAmount: number;
+  @IsOptional() @IsString() currency?: string;
+  @IsOptional() @IsDateString() startDate?: string;
+  @IsOptional() @IsDateString() endDate?: string;
+}
+
+export class CampaignQueryDto {
+  @IsOptional() @IsString() region?: string;
+  @IsOptional() @IsString() category?: string;
+  @IsOptional() @IsString() urgency?: string;
+  @IsOptional() @IsString() search?: string;
+  @IsOptional() page: number = 1;
+  @IsOptional() limit: number = 12;
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// src/donations/donations.service.ts
+// ─────────────────────────────────────────────────────────────
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
+import { AuditService } from '../audit/audit.service';
+import { CreateDonationDto } from './dto/create-donation.dto';
+import { v4 as uuid } from 'uuid';
+
+@Injectable()
+export class DonationsService {
+  constructor(
+    private prisma: PrismaService,
+    private audit: AuditService,
+  ) {}
+
+  async create(userId: string | null, dto: CreateDonationDto) {
+    const campaign = await this.prisma.campaign.findUnique({ where: { id: dto.campaignId } });
+    if (!campaign || campaign.status !== 'ACTIVE') throw new NotFoundException('Campaign not found or not active');
+
+    const donation = await this.prisma.donation.create({
+      data: {
+        userId: dto.isAnonymous ? null : userId,
+        campaignId: dto.campaignId,
+        amount: dto.amount,
+        currency: dto.currency ?? 'USD',
+        amountUsd: dto.amount, // real system would apply exchange rate
+        isAnonymous: dto.isAnonymous ?? false,
+        message: dto.message,
+        status: 'PENDING',
+      },
+    });
+
+    if (userId) await this.audit.log({ action: 'DONATION_RECEIVED', entityType: 'Donation', entityId: donation.id, actorId: userId });
+    return donation;
+  }
+
+  async findByUser(userId: string, page = 1, limit = 20) {
+    const [data, total] = await this.prisma.$transaction([
+      this.prisma.donation.findMany({
+        where: { userId },
+        include: { campaign: { select: { title: true, slug: true, coverImageUrl: true } } },
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      this.prisma.donation.count({ where: { userId } }),
+    ]);
+    return { data, total, page, limit };
+  }
+
+  async confirmDonation(donationId: string, providerTxId: string, idempotencyKey: string) {
+    // Called from webhook handler after Stripe confirms payment
+    return this.prisma.$transaction(async (tx) => {
+      const donation = await tx.donation.findUnique({ where: { id: donationId } });
+      if (!donation) throw new NotFoundException();
+      if (donation.status !== 'PENDING') return donation; // idempotent
+
+      const updated = await tx.donation.update({
+        where: { id: donationId },
+        data: { status: 'COMPLETED' },
+      });
+
+      await tx.transaction.create({
+        data: {
+          donationId,
+          type: 'DONATION',
+          status: 'COMPLETED',
+          provider: 'STRIPE',
+          providerTxId,
+          idempotencyKey,
+          amount: donation.amount,
+          currency: donation.currency,
+          amountUsd: donation.amountUsd,
+          feeAmount: donation.amount.mul(0.029).plus(0.30), // Stripe fee
+          netAmount: donation.amount.mul(0.971).minus(0.30),
+          processedAt: new Date(),
+        },
+      });
+
+      // Update campaign raised amount and donor count
+      await tx.campaign.update({
+        where: { id: donation.campaignId },
+        data: {
+          raisedAmount: { increment: donation.amountUsd },
+          donorCount: { increment: 1 },
+        },
+      });
+
+      // Update NGO total received
+      const campaign = await tx.campaign.findUnique({ where: { id: donation.campaignId } });
+      await tx.nGO.update({
+        where: { id: campaign!.ngoId },
+        data: { totalReceived: { increment: donation.amountUsd } },
+      });
+
+      // Update platform stats
+      await tx.platformStats.upsert({
+        where: { id: 'singleton' },
+        update: { totalRaisedUsd: { increment: donation.amountUsd }, totalDonors: { increment: 1 } },
+        create: { id: 'singleton', totalRaisedUsd: donation.amountUsd, totalDonors: 1 },
+      });
+
+      return updated;
+    });
+  }
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// src/payments/payments.service.ts  (Stripe + PayPal)
+// ─────────────────────────────────────────────────────────────
+import { Injectable, BadRequestException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import Stripe from 'stripe';
+import { PrismaService } from '../prisma/prisma.service';
+import { DonationsService } from '../donations/donations.service';
+import { CreatePaymentIntentDto } from './dto/create-payment-intent.dto';
+
+@Injectable()
+export class PaymentsService {
+  private stripe: Stripe;
+
+  constructor(
+    private config: ConfigService,
+    private prisma: PrismaService,
+    private donations: DonationsService,
+  ) {
+    this.stripe = new Stripe(config.get('STRIPE_SECRET_KEY')!, { apiVersion: '2024-04-10' });
+  }
+
+  async createPaymentIntent(userId: string | null, dto: CreatePaymentIntentDto) {
+    const donation = await this.donations.create(userId, {
+      campaignId: dto.campaignId,
+      amount: dto.amount,
+      currency: dto.currency ?? 'usd',
+      isAnonymous: dto.isAnonymous,
+      message: dto.message,
+    });
+
+    const intent = await this.stripe.paymentIntents.create({
+      amount: Math.round(dto.amount * 100), // cents
+      currency: dto.currency ?? 'usd',
+      metadata: { donationId: donation.id, campaignId: dto.campaignId },
+      idempotency_key: `pi_${donation.id}`,
+    });
+
+    return { clientSecret: intent.client_secret, donationId: donation.id };
+  }
+
+  async handleStripeWebhook(rawBody: Buffer, signature: string) {
+    const webhookSecret = this.config.get('STRIPE_WEBHOOK_SECRET')!;
+    let event: Stripe.Event;
+
+    try {
+      event = this.stripe.webhooks.constructEvent(rawBody, signature, webhookSecret);
+    } catch (err) {
+      throw new BadRequestException(`Webhook signature verification failed`);
+    }
+
+    switch (event.type) {
+      case 'payment_intent.succeeded': {
+        const intent = event.data.object as Stripe.PaymentIntent;
+        const { donationId } = intent.metadata;
+        await this.donations.confirmDonation(donationId, intent.id, `pi_${donationId}`);
+        break;
+      }
+      case 'payment_intent.payment_failed': {
+        const intent = event.data.object as Stripe.PaymentIntent;
+        await this.prisma.donation.update({
+          where: { id: intent.metadata.donationId },
+          data: { status: 'FAILED' },
+        });
+        break;
+      }
+      case 'charge.dispute.created': {
+        // Flag for compliance review
+        const charge = event.data.object as Stripe.Charge;
+        await this.prisma.complianceAlert.create({
+          data: {
+            entityType: 'Transaction',
+            entityId: charge.id,
+            severity: 'WARNING',
+            title: 'Payment dispute raised',
+            description: `Stripe dispute on charge ${charge.id}`,
+          },
+        });
+        break;
+      }
+    }
+
+    return { received: true };
+  }
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// src/payments/payments.controller.ts
+// ─────────────────────────────────────────────────────────────
+import { Controller, Post, Body, Req, Headers, RawBodyRequest, UseGuards } from '@nestjs/common';
+import { ApiTags } from '@nestjs/swagger';
+import { PaymentsService } from './payments.service';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { CreatePaymentIntentDto } from './dto/create-payment-intent.dto';
+
+@ApiTags('Payments')
+@Controller({ path: 'payments', version: '1' })
+export class PaymentsController {
+  constructor(private svc: PaymentsService) {}
+
+  @Post('intent')
+  @UseGuards(JwtAuthGuard)
+  createIntent(@CurrentUser() user: any, @Body() dto: CreatePaymentIntentDto) {
+    return this.svc.createPaymentIntent(user.id, dto);
+  }
+
+  // Stripe webhook — raw body required
+  @Post('webhook/stripe')
+  stripeWebhook(
+    @Req() req: RawBodyRequest<any>,
+    @Headers('stripe-signature') sig: string,
+  ) {
+    return this.svc.handleStripeWebhook(req.rawBody!, sig);
+  }
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// src/ngo/ngo.service.ts
+// ─────────────────────────────────────────────────────────────
+import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
+import { AuditService } from '../audit/audit.service';
+import { NGOApplicationDto } from './dto/ngo-application.dto';
+
+@Injectable()
+export class NGOService {
+  constructor(private prisma: PrismaService, private audit: AuditService) {}
+
+  async apply(userId: string, dto: NGOApplicationDto) {
+    const existing = await this.prisma.nGO.findUnique({ where: { userId } });
+    if (existing) throw new ConflictException('NGO application already exists');
+
+    const ngo = await this.prisma.nGO.create({
+      data: { ...dto, userId, status: 'PENDING' },
+    });
+    await this.audit.log({ action: 'NGO_APPLIED', entityType: 'NGO', entityId: ngo.id, actorId: userId });
+    return ngo;
+  }
+
+  async getProfile(userId: string) {
+    const ngo = await this.prisma.nGO.findUnique({
+      where: { userId },
+      include: { campaigns: { where: { deletedAt: null }, orderBy: { createdAt: 'desc' } } },
+    });
+    if (!ngo) throw new NotFoundException('NGO not found');
+    return ngo;
+  }
+
+  async approve(ngoId: string, adminId: string) {
+    const ngo = await this.prisma.nGO.update({
+      where: { id: ngoId },
+      data: { status: 'APPROVED', verifiedAt: new Date(), verifiedBy: adminId },
+    });
+    await this.prisma.user.update({ where: { id: ngo.userId }, data: { twoFactorEnabled: false } }); // prompt 2FA
+    await this.audit.log({ action: 'NGO_APPROVED', entityType: 'NGO', entityId: ngoId, actorId: adminId });
+    return ngo;
+  }
+
+  async reject(ngoId: string, adminId: string, reason: string) {
+    const ngo = await this.prisma.nGO.update({
+      where: { id: ngoId },
+      data: { status: 'REJECTED', rejectionReason: reason },
+    });
+    await this.audit.log({ action: 'NGO_REJECTED', entityType: 'NGO', entityId: ngoId, actorId: adminId });
+    return ngo;
+  }
+
+  async requestWithdrawal(ngoId: string, amount: number, note?: string) {
+    const ngo = await this.prisma.nGO.findUnique({ where: { id: ngoId } });
+    if (!ngo) throw new NotFoundException();
+    const available = Number(ngo.totalReceived) - Number(ngo.totalWithdrawn);
+    if (amount > available) throw new ConflictException('Insufficient available balance');
+
+    return this.prisma.withdrawalRequest.create({
+      data: { ngoId, amount, currency: 'USD', requestNote: note },
+    });
+  }
+
+  async getAnalytics(ngoId: string) {
+    const [campaigns, donations, allocations] = await Promise.all([
+      this.prisma.campaign.findMany({ where: { ngoId }, select: { id: true, title: true, raisedAmount: true, donorCount: true, status: true } }),
+      this.prisma.donation.aggregate({ where: { campaign: { ngoId } }, _sum: { amountUsd: true }, _count: true }),
+      this.prisma.fundAllocation.findMany({ where: { ngoId }, orderBy: { allocatedAt: 'desc' }, take: 10 }),
+    ]);
+    return { campaigns, donations, allocations };
+  }
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// src/transparency/transparency.service.ts
+// ─────────────────────────────────────────────────────────────
+import { Injectable } from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
+import { RedisService } from '../redis/redis.service';
+
+@Injectable()
+export class TransparencyService {
+  constructor(private prisma: PrismaService, private redis: RedisService) {}
+
+  async getPlatformStats() {
+    const cacheKey = 'transparency:stats';
+    const cached = await this.redis.get(cacheKey);
+    if (cached) return JSON.parse(cached);
+
+    const [stats, categoryBreakdown, monthlyGrowth, recentTx] = await Promise.all([
+      this.prisma.platformStats.findUnique({ where: { id: 'singleton' } }),
+      this.prisma.fundAllocation.groupBy({
+        by: ['category'],
+        _sum: { amount: true },
+        where: { isPublic: true },
+      }),
+      this.prisma.$queryRaw`
+        SELECT DATE_TRUNC('month', created_at) as month,
+               SUM(amount_usd) as total
+        FROM donations
+        WHERE status = 'COMPLETED'
+        GROUP BY 1 ORDER BY 1 LIMIT 12
+      `,
+      this.prisma.transaction.findMany({
+        where: { status: 'COMPLETED', type: 'DONATION' },
+        orderBy: { processedAt: 'desc' },
+        take: 20,
+        include: { donation: { include: { campaign: { select: { title: true } } } } },
+      }),
+    ]);
+
+    const result = { stats, categoryBreakdown, monthlyGrowth, recentTx };
+    await this.redis.set(cacheKey, JSON.stringify(result), 30);
+    return result;
+  }
+
+  async getPublicLedger(page = 1, limit = 50) {
+    return this.prisma.transaction.findMany({
+      where: { status: 'COMPLETED', type: 'DONATION' },
+      select: {
+        id: true, amount: true, currency: true, processedAt: true,
+        donation: {
+          select: {
+            isAnonymous: true,
+            message: true,
+            campaign: { select: { title: true, country: true } },
+          },
+        },
+      },
+      orderBy: { processedAt: 'desc' },
+      skip: (page - 1) * limit,
+      take: limit,
+    });
+  }
+
+  async getFundAllocations(campaignId?: string) {
+    return this.prisma.fundAllocation.findMany({
+      where: { isPublic: true, ...(campaignId && { campaignId }) },
+      include: { campaign: { select: { title: true } }, ngo: { select: { organizationName: true } } },
+      orderBy: { allocatedAt: 'desc' },
+    });
+  }
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// src/admin/admin.service.ts
+// ─────────────────────────────────────────────────────────────
+import { Injectable, NotFoundException } from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
+import { AuditService } from '../audit/audit.service';
+
+@Injectable()
+export class AdminService {
+  constructor(private prisma: PrismaService, private audit: AuditService) {}
+
+  async getDashboardStats() {
+    const [users, ngos, campaigns, donations, alerts] = await Promise.all([
+      this.prisma.user.count(),
+      this.prisma.nGO.groupBy({ by: ['status'], _count: true }),
+      this.prisma.campaign.groupBy({ by: ['status'], _count: true }),
+      this.prisma.donation.aggregate({ _sum: { amountUsd: true }, _count: true }),
+      this.prisma.complianceAlert.count({ where: { isResolved: false } }),
+    ]);
+    return { users, ngos, campaigns, donations, openAlerts: alerts };
+  }
+
+  async getPendingNGOs() {
+    return this.prisma.nGO.findMany({
+      where: { status: 'PENDING' },
+      include: { user: { select: { email: true, createdAt: true } }, documents: true },
+      orderBy: { createdAt: 'asc' },
+    });
+  }
+
+  async getPendingCampaigns() {
+    return this.prisma.campaign.findMany({
+      where: { status: 'PENDING_APPROVAL' },
+      include: { ngo: { select: { organizationName: true, status: true } } },
+      orderBy: { createdAt: 'asc' },
+    });
+  }
+
+  async suspendUser(targetId: string, adminId: string, reason: string) {
+    await this.prisma.user.update({ where: { id: targetId }, data: { status: 'SUSPENDED' } });
+    await this.audit.log({ action: 'USER_SUSPENDED', entityType: 'User', entityId: targetId, actorId: adminId, metadata: { reason } });
+  }
+
+  async freezeAccount(ngoId: string, adminId: string, reason: string) {
+    await this.prisma.nGO.update({ where: { id: ngoId }, data: { status: 'SUSPENDED' } });
+    await this.audit.log({ action: 'ACCOUNT_FROZEN', entityType: 'NGO', entityId: ngoId, actorId: adminId, metadata: { reason } });
+    await this.prisma.complianceAlert.create({
+      data: { ngoId, entityType: 'NGO', entityId: ngoId, severity: 'CRITICAL', title: 'Account frozen', description: reason },
+    });
+  }
+
+  async getAuditLog(page = 1, limit = 50) {
+    return this.prisma.auditLog.findMany({
+      include: { actor: { select: { email: true, role: true } } },
+      orderBy: { createdAt: 'desc' },
+      skip: (page - 1) * limit,
+      take: limit,
+    });
+  }
+
+  async getComplianceAlerts(resolved = false) {
+    return this.prisma.complianceAlert.findMany({
+      where: { isResolved: resolved },
+      orderBy: [{ severity: 'desc' }, { createdAt: 'desc' }],
+    });
+  }
+
+  async processWithdrawal(id: string, adminId: string, approved: boolean, note?: string) {
+    const request = await this.prisma.withdrawalRequest.findUnique({ where: { id }, include: { ngo: true } });
+    if (!request) throw new NotFoundException();
+
+    const status = approved ? 'APPROVED' : 'REJECTED';
+    await this.prisma.withdrawalRequest.update({
+      where: { id },
+      data: { status, reviewedBy: adminId, reviewedAt: new Date(), reviewNote: note },
+    });
+    if (approved) {
+      await this.prisma.nGO.update({
+        where: { id: request.ngoId },
+        data: { totalWithdrawn: { increment: request.amount } },
+      });
+    }
+    const action = approved ? 'WITHDRAWAL_APPROVED' : 'WITHDRAWAL_REJECTED';
+    await this.audit.log({ action, entityType: 'WithdrawalRequest', entityId: id, actorId: adminId });
+  }
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// src/audit/audit.service.ts
+// ─────────────────────────────────────────────────────────────
+import { Injectable } from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
+import { AuditAction } from '@prisma/client';
+
+interface LogParams {
+  action: AuditAction;
+  entityType: string;
+  entityId?: string;
+  actorId?: string;
+  metadata?: Record<string, any>;
+  ipAddress?: string;
+}
+
+@Injectable()
+export class AuditService {
+  constructor(private prisma: PrismaService) {}
+
+  async log(params: LogParams) {
+    // Audit logs are immutable — insert only, never update/delete
+    return this.prisma.auditLog.create({ data: params });
+  }
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// src/storage/storage.service.ts  (AWS S3)
+// ─────────────────────────────────────────────────────────────
+import { Injectable, BadRequestException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { v4 as uuid } from 'uuid';
+
+const ALLOWED_MIME = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+
+@Injectable()
+export class StorageService {
+  private s3: S3Client;
+  private bucket: string;
+
+  constructor(private config: ConfigService) {
+    this.s3 = new S3Client({
+      region: config.get('AWS_REGION', 'us-east-1'),
+      credentials: {
+        accessKeyId: config.get('AWS_ACCESS_KEY_ID')!,
+        secretAccessKey: config.get('AWS_SECRET_ACCESS_KEY')!,
+      },
+    });
+    this.bucket = config.get('S3_BUCKET')!;
+  }
+
+  async upload(file: Express.Multer.File, folder: string): Promise<{ key: string; url: string }> {
+    if (!ALLOWED_MIME.includes(file.mimetype)) throw new BadRequestException('File type not allowed');
+    if (file.size > MAX_FILE_SIZE) throw new BadRequestException('File exceeds 10MB limit');
+
+    const key = `${folder}/${uuid()}-${file.originalname.replace(/\s/g, '_')}`;
+    await this.s3.send(new PutObjectCommand({
+      Bucket: this.bucket,
+      Key: key,
+      Body: file.buffer,
+      ContentType: file.mimetype,
+      ServerSideEncryption: 'AES256',
+    }));
+
+    const url = `https://${this.bucket}.s3.amazonaws.com/${key}`;
+    return { key, url };
+  }
+
+  async getSignedUrl(key: string, expiresIn = 3600): Promise<string> {
+    return getSignedUrl(this.s3, new GetObjectCommand({ Bucket: this.bucket, Key: key }), { expiresIn });
+  }
+
+  async delete(key: string): Promise<void> {
+    await this.s3.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
+  }
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// src/common/filters/http-exception.filter.ts
+// ─────────────────────────────────────────────────────────────
+import { ExceptionFilter, Catch, ArgumentsHost, HttpException, HttpStatus, Logger } from '@nestjs/common';
+
+@Catch()
+export class HttpExceptionFilter implements ExceptionFilter {
+  private logger = new Logger('HttpException');
+
+  catch(exception: unknown, host: ArgumentsHost) {
+    const ctx = host.switchToHttp();
+    const res = ctx.getResponse();
+    const req = ctx.getRequest();
+    const status = exception instanceof HttpException ? exception.getStatus() : HttpStatus.INTERNAL_SERVER_ERROR;
+    const message = exception instanceof HttpException ? exception.getResponse() : 'Internal server error';
+
+    this.logger.error(`${req.method} ${req.url} → ${status}`, exception instanceof Error ? exception.stack : '');
+
+    res.status(status).json({
+      success: false,
+      statusCode: status,
+      message,
+      timestamp: new Date().toISOString(),
+      path: req.url,
+    });
+  }
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// src/common/interceptors/transform.interceptor.ts
+// ─────────────────────────────────────────────────────────────
+import { CallHandler, ExecutionContext, Injectable, NestInterceptor } from '@nestjs/common';
+import { Observable } from 'rxjs';
+import { map } from 'rxjs/operators';
+
+@Injectable()
+export class TransformInterceptor implements NestInterceptor {
+  intercept(_: ExecutionContext, next: CallHandler): Observable<any> {
+    return next.handle().pipe(
+      map(data => ({ success: true, data, timestamp: new Date().toISOString() }))
+    );
+  }
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// src/health/health.controller.ts
+// ─────────────────────────────────────────────────────────────
+import { Controller, Get } from '@nestjs/common';
+import { HealthCheck, HealthCheckService, PrismaHealthIndicator, MemoryHealthIndicator } from '@nestjs/terminus';
+import { PrismaService } from '../prisma/prisma.service';
+
+@Controller('health')
+export class HealthController {
+  constructor(
+    private health: HealthCheckService,
+    private prismaHealth: PrismaHealthIndicator,
+    private memory: MemoryHealthIndicator,
+    private prisma: PrismaService,
+  ) {}
+
+  @Get()
+  @HealthCheck()
+  check() {
+    return this.health.check([
+      () => this.prismaHealth.pingCheck('database', this.prisma),
+      () => this.memory.checkHeap('memory_heap', 300 * 1024 * 1024),
+    ]);
+  }
+}

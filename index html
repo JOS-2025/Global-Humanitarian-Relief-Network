@@ -1,0 +1,1654 @@
+import { useState, useEffect, useRef } from "react";
+import { motion, AnimatePresence, useInView, useMotionValue, useSpring } from "framer-motion";
+import { LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer, AreaChart, Area } from "recharts";
+
+// ─── DESIGN TOKENS ─────────────────────────────────────────────────────────────
+const COLORS = {
+  navy: "#0A1628",
+  navyMid: "#0D1F3C",
+  navyLight: "#132847",
+  blue: "#1A3A6B",
+  azure: "#1E5FB5",
+  sky: "#3B82F6",
+  emerald: "#10B981",
+  emeraldLight: "#34D399",
+  gold: "#F59E0B",
+  slate: "#8BA4C4",
+  white: "#F8FAFF",
+  border: "rgba(59,130,246,0.15)",
+};
+
+// ─── GLOBAL STYLES ──────────────────────────────────────────────────────────────
+const GlobalStyles = () => (
+  <style>{`
+    @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700;900&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap');
+    
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    
+    body {
+      background: #0A1628;
+      color: #F8FAFF;
+      font-family: 'DM Sans', sans-serif;
+      overflow-x: hidden;
+    }
+
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: #0A1628; }
+    ::-webkit-scrollbar-thumb { background: #1A3A6B; border-radius: 3px; }
+
+    .serif { font-family: 'Playfair Display', serif; }
+    .mono { font-family: 'DM Mono', monospace; }
+
+    .glow-btn {
+      position: relative;
+      overflow: hidden;
+      transition: all 0.3s ease;
+    }
+    .glow-btn::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(circle at center, rgba(16,185,129,0.4) 0%, transparent 70%);
+      opacity: 0;
+      transition: opacity 0.3s ease;
+    }
+    .glow-btn:hover::before { opacity: 1; }
+    .glow-btn:hover { box-shadow: 0 0 30px rgba(16,185,129,0.3); transform: translateY(-2px); }
+
+    .card-hover {
+      transition: all 0.3s cubic-bezier(0.4,0,0.2,1);
+    }
+    .card-hover:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 20px 60px rgba(0,0,0,0.4), 0 0 0 1px rgba(59,130,246,0.2);
+    }
+
+    .grid-bg {
+      background-image: 
+        linear-gradient(rgba(59,130,246,0.04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(59,130,246,0.04) 1px, transparent 1px);
+      background-size: 60px 60px;
+    }
+
+    .noise-overlay::after {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 512 512' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
+      pointer-events: none;
+      z-index: 1000;
+      opacity: 0.4;
+    }
+
+    .progress-bar-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #10B981, #34D399);
+      border-radius: 999px;
+      position: relative;
+      overflow: hidden;
+    }
+    .progress-bar-fill::after {
+      content: '';
+      position: absolute;
+      top: 0; left: -100%;
+      width: 100%; height: 100%;
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
+      animation: shimmer 2s infinite;
+    }
+    @keyframes shimmer { to { left: 100%; } }
+
+    .verified-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      background: rgba(16,185,129,0.12);
+      border: 1px solid rgba(16,185,129,0.3);
+      color: #34D399;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 10px;
+      border-radius: 999px;
+      letter-spacing: 0.05em;
+    }
+
+    .nav-link {
+      position: relative;
+      color: #8BA4C4;
+      transition: color 0.2s;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+    }
+    .nav-link::after {
+      content: '';
+      position: absolute;
+      bottom: -2px; left: 0;
+      width: 0; height: 1px;
+      background: #10B981;
+      transition: width 0.3s ease;
+    }
+    .nav-link:hover { color: #F8FAFF; }
+    .nav-link:hover::after { width: 100%; }
+    .nav-link.active { color: #F8FAFF; }
+    .nav-link.active::after { width: 100%; }
+
+    .floating-orb {
+      position: absolute;
+      border-radius: 50%;
+      filter: blur(80px);
+      pointer-events: none;
+    }
+
+    .globe-ring {
+      position: absolute;
+      border-radius: 50%;
+      border: 1px solid rgba(59,130,246,0.15);
+      animation: pulse-ring 4s ease-in-out infinite;
+    }
+    @keyframes pulse-ring {
+      0%, 100% { transform: translate(-50%, -50%) scale(1); opacity: 0.5; }
+      50% { transform: translate(-50%, -50%) scale(1.05); opacity: 0.2; }
+    }
+
+    .stat-card {
+      background: linear-gradient(135deg, rgba(19,40,71,0.8) 0%, rgba(13,31,60,0.8) 100%);
+      border: 1px solid rgba(59,130,246,0.12);
+      backdrop-filter: blur(20px);
+    }
+
+    select, input, textarea {
+      background: rgba(10,22,40,0.8) !important;
+      border: 1px solid rgba(59,130,246,0.2) !important;
+      color: #F8FAFF !important;
+      border-radius: 8px !important;
+      padding: 10px 14px !important;
+      font-family: 'DM Sans', sans-serif !important;
+      font-size: 14px !important;
+      outline: none !important;
+      transition: border-color 0.2s !important;
+    }
+    select:focus, input:focus, textarea:focus {
+      border-color: rgba(59,130,246,0.5) !important;
+    }
+    select option { background: #0A1628; }
+
+    .urgency-critical { color: #EF4444; background: rgba(239,68,68,0.1); border-color: rgba(239,68,68,0.3); }
+    .urgency-high { color: #F59E0B; background: rgba(245,158,11,0.1); border-color: rgba(245,158,11,0.3); }
+    .urgency-medium { color: #3B82F6; background: rgba(59,130,246,0.1); border-color: rgba(59,130,246,0.3); }
+
+    .tab-btn {
+      padding: 10px 20px;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+      border: 1px solid transparent;
+    }
+    .tab-btn.active {
+      background: rgba(59,130,246,0.15);
+      border-color: rgba(59,130,246,0.3);
+      color: #F8FAFF;
+    }
+    .tab-btn:not(.active) {
+      color: #8BA4C4;
+    }
+    .tab-btn:not(.active):hover {
+      background: rgba(59,130,246,0.05);
+      color: #F8FAFF;
+    }
+  `}</style>
+);
+
+// ─── DATA ──────────────────────────────────────────────────────────────────────
+const campaigns = [
+  { id: 1, title: "Gaza Emergency Medical Response", org: "MedAid International", country: "Palestine", region: "Middle East", category: "Medical", urgency: "critical", goal: 2500000, raised: 1847320, image: "🏥", verified: true, donors: 12847, days: 8 },
+  { id: 2, title: "Sudan Refugee Food Security", org: "World Relief Coalition", country: "Sudan", region: "Africa", category: "Food", urgency: "critical", goal: 1800000, raised: 1203450, image: "🌾", verified: true, donors: 8932, days: 15 },
+  { id: 3, title: "Ukraine Winter Shelter Program", org: "European Aid Network", country: "Ukraine", region: "Europe", category: "Shelter", urgency: "high", goal: 3200000, raised: 2100000, image: "🏠", verified: true, donors: 21430, days: 22 },
+  { id: 4, title: "Yemen Clean Water Initiative", org: "H2O Global", country: "Yemen", region: "Middle East", category: "Water", urgency: "critical", goal: 900000, raised: 567890, image: "💧", verified: true, donors: 4521, days: 5 },
+  { id: 5, title: "Haiti Earthquake Recovery", org: "Caribbean Relief Fund", country: "Haiti", region: "Americas", category: "Disaster Relief", urgency: "high", goal: 4000000, raised: 2780000, image: "🔨", verified: true, donors: 31200, days: 30 },
+  { id: 6, title: "Somalia Child Nutrition Program", org: "UNICEF Partner NGO", country: "Somalia", region: "Africa", category: "Children", urgency: "critical", goal: 1500000, raised: 890000, image: "👶", verified: true, donors: 7650, days: 12 },
+  { id: 7, title: "Myanmar Education for Displaced", org: "Asian Education Trust", country: "Myanmar", region: "Asia", category: "Education", urgency: "medium", goal: 750000, raised: 412000, image: "📚", verified: true, donors: 3210, days: 45 },
+  { id: 8, title: "Ethiopia Drought Relief", org: "Africa United NGO", country: "Ethiopia", region: "Africa", category: "Food", urgency: "high", goal: 2100000, raised: 1456000, image: "🌍", verified: true, donors: 9870, days: 18 },
+];
+
+const allocationData = [
+  { name: "Medical Aid", value: 32, color: "#3B82F6" },
+  { name: "Food Security", value: 28, color: "#10B981" },
+  { name: "Shelter", value: 18, color: "#F59E0B" },
+  { name: "Water & Sanitation", value: 12, color: "#06B6D4" },
+  { name: "Education", value: 6, color: "#8B5CF6" },
+  { name: "Other", value: 4, color: "#6B7280" },
+];
+
+const growthData = [
+  { month: "Jan", funds: 12.4, donors: 8200, campaigns: 18 },
+  { month: "Feb", funds: 18.7, donors: 12400, campaigns: 24 },
+  { month: "Mar", funds: 24.1, donors: 19800, campaigns: 31 },
+  { month: "Apr", funds: 31.8, donors: 28300, campaigns: 38 },
+  { month: "May", funds: 42.3, donors: 34100, campaigns: 45 },
+  { month: "Jun", funds: 58.9, donors: 45600, campaigns: 52 },
+  { month: "Jul", funds: 67.4, donors: 56200, campaigns: 61 },
+  { month: "Aug", funds: 78.2, donors: 68900, campaigns: 67 },
+  { month: "Sep", funds: 89.1, donors: 79400, campaigns: 74 },
+  { month: "Oct", funds: 103.7, donors: 89200, campaigns: 81 },
+  { month: "Nov", funds: 118.4, donors: 98700, campaigns: 88 },
+  { month: "Dec", funds: 134.2, donors: 112400, campaigns: 94 },
+];
+
+const recentTransactions = [
+  { id: "TXN-001", donor: "Anonymous", amount: "$5,000", campaign: "Gaza Emergency", time: "2 min ago", status: "completed" },
+  { id: "TXN-002", donor: "J. Morrison", amount: "$250", campaign: "Sudan Food", time: "8 min ago", status: "completed" },
+  { id: "TXN-003", donor: "Tech Corp CSR", amount: "$50,000", campaign: "Ukraine Shelter", time: "15 min ago", status: "completed" },
+  { id: "TXN-004", donor: "Anonymous", amount: "$100", campaign: "Yemen Water", time: "23 min ago", status: "completed" },
+  { id: "TXN-005", donor: "R. Chen", amount: "$1,000", campaign: "Haiti Recovery", time: "31 min ago", status: "completed" },
+];
+
+// ─── ANIMATED COUNTER ──────────────────────────────────────────────────────────
+function AnimatedCounter({ target, prefix = "", suffix = "", duration = 2000, decimals = 0 }) {
+  const [count, setCount] = useState(0);
+  const ref = useRef(null);
+  const inView = useInView(ref, { once: true });
+
+  useEffect(() => {
+    if (!inView) return;
+    let start = 0;
+    const step = target / (duration / 16);
+    const timer = setInterval(() => {
+      start += step;
+      if (start >= target) { setCount(target); clearInterval(timer); }
+      else setCount(start);
+    }, 16);
+    return () => clearInterval(timer);
+  }, [inView, target, duration]);
+
+  return (
+    <span ref={ref}>
+      {prefix}{decimals > 0 ? count.toFixed(decimals) : Math.floor(count).toLocaleString()}{suffix}
+    </span>
+  );
+}
+
+// ─── NAVIGATION ────────────────────────────────────────────────────────────────
+function Nav({ page, setPage }) {
+  const [scrolled, setScrolled] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  useEffect(() => {
+    const handler = () => setScrolled(window.scrollY > 50);
+    window.addEventListener("scroll", handler);
+    return () => window.removeEventListener("scroll", handler);
+  }, []);
+
+  const links = [
+    { label: "Home", id: "home" },
+    { label: "Campaigns", id: "campaigns" },
+    { label: "Transparency", id: "transparency" },
+    { label: "How It Works", id: "howitworks" },
+    { label: "About", id: "about" },
+  ];
+
+  return (
+    <motion.nav
+      style={{
+        position: "fixed", top: 0, left: 0, right: 0, zIndex: 900,
+        padding: "0 24px",
+        height: 68,
+        display: "flex", alignItems: "center", justifyContent: "space-between",
+        background: scrolled ? "rgba(10,22,40,0.95)" : "transparent",
+        backdropFilter: scrolled ? "blur(20px)" : "none",
+        borderBottom: scrolled ? "1px solid rgba(59,130,246,0.08)" : "none",
+        transition: "all 0.3s ease",
+      }}
+    >
+      {/* Logo */}
+      <div style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }} onClick={() => setPage("home")}>
+        <div style={{
+          width: 36, height: 36,
+          background: "linear-gradient(135deg, #1E5FB5, #10B981)",
+          borderRadius: 8,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          fontSize: 16,
+        }}>🌐</div>
+        <div>
+          <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 15, fontWeight: 700, letterSpacing: "-0.02em", color: "#F8FAFF" }}>GHRN</div>
+          <div style={{ fontSize: 9, color: "#8BA4C4", letterSpacing: "0.12em", marginTop: -2 }}>GLOBAL RELIEF NETWORK</div>
+        </div>
+      </div>
+
+      {/* Desktop Links */}
+      <div style={{ display: "flex", alignItems: "center", gap: 28 }}>
+        {links.map(l => (
+          <span
+            key={l.id}
+            className={`nav-link ${page === l.id ? "active" : ""}`}
+            onClick={() => setPage(l.id)}
+          >{l.label}</span>
+        ))}
+      </div>
+
+      {/* CTA Buttons */}
+      <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+        <button
+          onClick={() => setPage("login")}
+          style={{
+            background: "transparent", border: "1px solid rgba(59,130,246,0.3)",
+            color: "#8BA4C4", padding: "8px 18px", borderRadius: 8,
+            fontSize: 13, fontWeight: 500, cursor: "pointer",
+            fontFamily: "'DM Sans', sans-serif",
+            transition: "all 0.2s",
+          }}
+          onMouseEnter={e => { e.target.style.borderColor = "rgba(59,130,246,0.6)"; e.target.style.color = "#F8FAFF"; }}
+          onMouseLeave={e => { e.target.style.borderColor = "rgba(59,130,246,0.3)"; e.target.style.color = "#8BA4C4"; }}
+        >Sign In</button>
+        <button
+          className="glow-btn"
+          onClick={() => setPage("campaigns")}
+          style={{
+            background: "linear-gradient(135deg, #10B981, #059669)",
+            border: "none", color: "#fff", padding: "8px 20px",
+            borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: "pointer",
+            fontFamily: "'DM Sans', sans-serif",
+          }}
+        >Donate Now</button>
+      </div>
+    </motion.nav>
+  );
+}
+
+// ─── HERO SECTION ───────────────────────────────────────────────────────────────
+function HeroSection({ setPage }) {
+  return (
+    <section style={{ position: "relative", minHeight: "100vh", display: "flex", alignItems: "center", overflow: "hidden" }}>
+      {/* Orbs */}
+      <div className="floating-orb" style={{ width: 600, height: 600, background: "rgba(30,95,181,0.15)", top: "-10%", right: "-5%", animation: "none" }} />
+      <div className="floating-orb" style={{ width: 400, height: 400, background: "rgba(16,185,129,0.08)", bottom: "10%", left: "-5%" }} />
+
+      {/* Globe Rings */}
+      {[600, 480, 360].map((size, i) => (
+        <div key={i} className="globe-ring" style={{
+          width: size, height: size,
+          top: "50%", right: "-5%",
+          transform: "translate(-50%, -50%)",
+          animationDelay: `${i * 1.3}s`,
+        }} />
+      ))}
+
+      {/* Grid Background */}
+      <div className="grid-bg" style={{ position: "absolute", inset: 0, opacity: 0.5 }} />
+
+      {/* Content */}
+      <div style={{ position: "relative", maxWidth: 1280, margin: "0 auto", padding: "120px 24px 80px", zIndex: 2 }}>
+        <motion.div
+          initial={{ opacity: 0, y: 30 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.8, ease: [0.4, 0, 0.2, 1] }}
+        >
+          <div style={{ display: "inline-flex", alignItems: "center", gap: 8, background: "rgba(16,185,129,0.08)", border: "1px solid rgba(16,185,129,0.2)", padding: "6px 16px", borderRadius: 999, marginBottom: 32 }}>
+            <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#10B981", boxShadow: "0 0 8px #10B981", display: "inline-block", animation: "pulse-ring 2s infinite" }} />
+            <span style={{ fontSize: 12, color: "#34D399", fontWeight: 600, letterSpacing: "0.08em" }}>LIVE — $134.2M RAISED GLOBALLY</span>
+          </div>
+        </motion.div>
+
+        <motion.h1
+          className="serif"
+          initial={{ opacity: 0, y: 40 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.9, delay: 0.1, ease: [0.4, 0, 0.2, 1] }}
+          style={{
+            fontSize: "clamp(42px, 6vw, 88px)",
+            fontWeight: 900, lineHeight: 1.05,
+            letterSpacing: "-0.03em",
+            maxWidth: 820, marginBottom: 28,
+            background: "linear-gradient(135deg, #F8FAFF 40%, #8BA4C4 100%)",
+            WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
+          }}
+        >
+          Global Solidarity.<br />
+          <span style={{ background: "linear-gradient(135deg, #10B981, #3B82F6)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>Verified Impact.</span>
+        </motion.h1>
+
+        <motion.p
+          initial={{ opacity: 0, y: 30 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.8, delay: 0.25, ease: [0.4, 0, 0.2, 1] }}
+          style={{ fontSize: 18, color: "#8BA4C4", lineHeight: 1.7, maxWidth: 560, marginBottom: 44 }}
+        >
+          The world's most transparent humanitarian funding infrastructure. Every dollar tracked, every impact verified, every decision accountable.
+        </motion.p>
+
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.7, delay: 0.4 }}
+          style={{ display: "flex", gap: 16, flexWrap: "wrap" }}
+        >
+          <button
+            className="glow-btn"
+            onClick={() => setPage("campaigns")}
+            style={{
+              background: "linear-gradient(135deg, #10B981, #059669)",
+              border: "none", color: "#fff",
+              padding: "14px 32px", borderRadius: 10,
+              fontSize: 15, fontWeight: 700, cursor: "pointer",
+              fontFamily: "'DM Sans', sans-serif",
+              letterSpacing: "0.02em",
+            }}
+          >
+            Donate Now →
+          </button>
+          <button
+            onClick={() => setPage("ngo-apply")}
+            style={{
+              background: "transparent",
+              border: "1px solid rgba(59,130,246,0.3)",
+              color: "#8BA4C4", padding: "14px 32px",
+              borderRadius: 10, fontSize: 15, fontWeight: 600,
+              cursor: "pointer", fontFamily: "'DM Sans', sans-serif",
+              transition: "all 0.2s",
+            }}
+            onMouseEnter={e => { e.target.style.borderColor = "rgba(59,130,246,0.6)"; e.target.style.color = "#F8FAFF"; }}
+            onMouseLeave={e => { e.target.style.borderColor = "rgba(59,130,246,0.3)"; e.target.style.color = "#8BA4C4"; }}
+          >
+            Apply as NGO
+          </button>
+        </motion.div>
+
+        {/* Live Stats Bar */}
+        <motion.div
+          initial={{ opacity: 0, y: 40 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.8, delay: 0.6 }}
+          style={{
+            display: "grid", gridTemplateColumns: "repeat(4, 1fr)",
+            gap: 1, marginTop: 72, background: "rgba(59,130,246,0.08)",
+            borderRadius: 16, border: "1px solid rgba(59,130,246,0.12)",
+            overflow: "hidden", maxWidth: 780,
+          }}
+        >
+          {[
+            { label: "Funds Raised", value: 134200000, prefix: "$", suffix: "", decimals: 0, format: v => `$${(v/1000000).toFixed(1)}M` },
+            { label: "Active Campaigns", value: 94, prefix: "", suffix: "", decimals: 0 },
+            { label: "Countries Served", value: 47, prefix: "", suffix: "", decimals: 0 },
+            { label: "Verified NGOs", value: 186, prefix: "", suffix: "+", decimals: 0 },
+          ].map((stat, i) => (
+            <div key={i} style={{
+              padding: "22px 20px",
+              background: i % 2 === 0 ? "rgba(13,31,60,0.6)" : "rgba(10,22,40,0.4)",
+              backdropFilter: "blur(10px)",
+              textAlign: "center",
+            }}>
+              <div style={{ fontSize: 26, fontWeight: 700, color: "#F8FAFF", fontFamily: "'DM Mono', monospace", letterSpacing: "-0.02em" }}>
+                <AnimatedCounter target={stat.value} prefix={stat.prefix} suffix={stat.suffix} />
+              </div>
+              <div style={{ fontSize: 11, color: "#8BA4C4", marginTop: 4, letterSpacing: "0.06em", textTransform: "uppercase" }}>{stat.label}</div>
+            </div>
+          ))}
+        </motion.div>
+      </div>
+    </section>
+  );
+}
+
+// ─── CAMPAIGNS PAGE ─────────────────────────────────────────────────────────────
+function CampaignsPage({ setPage, setSelectedCampaign }) {
+  const [region, setRegion] = useState("all");
+  const [category, setCategory] = useState("all");
+  const [urgency, setUrgency] = useState("all");
+  const [search, setSearch] = useState("");
+
+  const filtered = campaigns.filter(c => {
+    if (region !== "all" && c.region !== region) return false;
+    if (category !== "all" && c.category !== category) return false;
+    if (urgency !== "all" && c.urgency !== urgency) return false;
+    if (search && !c.title.toLowerCase().includes(search.toLowerCase())) return false;
+    return true;
+  });
+
+  const container = { hidden: {}, show: { transition: { staggerChildren: 0.07 } } };
+  const item = { hidden: { opacity: 0, y: 24 }, show: { opacity: 1, y: 0, transition: { duration: 0.5, ease: [0.4,0,0.2,1] } } };
+
+  return (
+    <div style={{ minHeight: "100vh", paddingTop: 88 }}>
+      {/* Header */}
+      <div style={{ maxWidth: 1280, margin: "0 auto", padding: "40px 24px 20px" }}>
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
+          <div style={{ fontSize: 12, color: "#10B981", letterSpacing: "0.12em", fontWeight: 600, marginBottom: 10 }}>ACTIVE CAMPAIGNS</div>
+          <h1 className="serif" style={{ fontSize: 44, fontWeight: 800, letterSpacing: "-0.03em", marginBottom: 8 }}>Fund What Matters</h1>
+          <p style={{ color: "#8BA4C4", fontSize: 16 }}>All campaigns are independently verified. 100% of donations reach their destination.</p>
+        </motion.div>
+
+        {/* Filters */}
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.1 }}
+          style={{ display: "flex", gap: 12, marginTop: 32, flexWrap: "wrap", alignItems: "center" }}
+        >
+          <input
+            type="text" placeholder="Search campaigns..."
+            value={search} onChange={e => setSearch(e.target.value)}
+            style={{ flex: "1 1 200px", minWidth: 200 }}
+          />
+          <select value={region} onChange={e => setRegion(e.target.value)} style={{ flex: "0 0 150px" }}>
+            <option value="all">All Regions</option>
+            <option value="Middle East">Middle East</option>
+            <option value="Africa">Africa</option>
+            <option value="Europe">Europe</option>
+            <option value="Americas">Americas</option>
+            <option value="Asia">Asia</option>
+          </select>
+          <select value={category} onChange={e => setCategory(e.target.value)} style={{ flex: "0 0 150px" }}>
+            <option value="all">All Categories</option>
+            <option value="Medical">Medical</option>
+            <option value="Food">Food</option>
+            <option value="Shelter">Shelter</option>
+            <option value="Water">Water</option>
+            <option value="Education">Education</option>
+          </select>
+          <select value={urgency} onChange={e => setUrgency(e.target.value)} style={{ flex: "0 0 150px" }}>
+            <option value="all">All Urgency</option>
+            <option value="critical">Critical</option>
+            <option value="high">High</option>
+            <option value="medium">Medium</option>
+          </select>
+        </motion.div>
+      </div>
+
+      {/* Campaign Grid */}
+      <div style={{ maxWidth: 1280, margin: "0 auto", padding: "20px 24px 80px" }}>
+        <motion.div
+          variants={container} initial="hidden" animate="show"
+          style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 24 }}
+        >
+          {filtered.map(c => {
+            const pct = Math.round((c.raised / c.goal) * 100);
+            return (
+              <motion.div
+                key={c.id}
+                variants={item}
+                className="card-hover"
+                style={{
+                  background: "linear-gradient(135deg, rgba(19,40,71,0.9) 0%, rgba(13,31,60,0.9) 100%)",
+                  border: "1px solid rgba(59,130,246,0.1)",
+                  borderRadius: 16, overflow: "hidden", cursor: "pointer",
+                }}
+                onClick={() => { setSelectedCampaign(c); setPage("donate"); }}
+              >
+                {/* Campaign Image */}
+                <div style={{
+                  height: 160, background: "linear-gradient(135deg, rgba(30,95,181,0.3), rgba(10,22,40,0.8))",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  fontSize: 60, position: "relative",
+                }}>
+                  {c.image}
+                  <div style={{ position: "absolute", top: 12, left: 12 }}>
+                    <span className={`verified-badge`}>✓ VERIFIED</span>
+                  </div>
+                  <div style={{ position: "absolute", top: 12, right: 12 }}>
+                    <span className={`verified-badge urgency-${c.urgency}`} style={{ fontSize: 10 }}>
+                      {c.urgency.toUpperCase()}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Content */}
+                <div style={{ padding: "20px 20px 24px" }}>
+                  <div style={{ fontSize: 11, color: "#8BA4C4", marginBottom: 6, letterSpacing: "0.05em" }}>
+                    {c.category} · {c.country}
+                  </div>
+                  <h3 style={{ fontSize: 17, fontWeight: 700, lineHeight: 1.3, marginBottom: 8, letterSpacing: "-0.01em" }}>{c.title}</h3>
+                  <div style={{ fontSize: 12, color: "#8BA4C4", marginBottom: 18 }}>by {c.org}</div>
+
+                  {/* Progress */}
+                  <div style={{ marginBottom: 14 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: "#10B981" }}>${(c.raised/1000000).toFixed(2)}M raised</span>
+                      <span style={{ fontSize: 13, color: "#8BA4C4" }}>{pct}%</span>
+                    </div>
+                    <div style={{ height: 6, background: "rgba(255,255,255,0.06)", borderRadius: 999, overflow: "hidden" }}>
+                      <motion.div
+                        className="progress-bar-fill"
+                        initial={{ width: 0 }}
+                        whileInView={{ width: `${pct}%` }}
+                        transition={{ duration: 1.2, ease: [0.4, 0, 0.2, 1] }}
+                      />
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6 }}>
+                      <span style={{ fontSize: 11, color: "#8BA4C4" }}>Goal: ${(c.goal/1000000).toFixed(1)}M</span>
+                      <span style={{ fontSize: 11, color: "#8BA4C4" }}>{c.donors.toLocaleString()} donors</span>
+                    </div>
+                  </div>
+
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <span style={{ fontSize: 12, color: "#F59E0B" }}>⏱ {c.days} days left</span>
+                    <button
+                      className="glow-btn"
+                      style={{
+                        background: "linear-gradient(135deg, #10B981, #059669)",
+                        border: "none", color: "#fff",
+                        padding: "8px 20px", borderRadius: 8,
+                        fontSize: 13, fontWeight: 600, cursor: "pointer",
+                        fontFamily: "'DM Sans', sans-serif",
+                      }}
+                    >Donate →</button>
+                  </div>
+                </div>
+              </motion.div>
+            );
+          })}
+        </motion.div>
+
+        {filtered.length === 0 && (
+          <div style={{ textAlign: "center", padding: "80px 20px", color: "#8BA4C4" }}>
+            <div style={{ fontSize: 40, marginBottom: 16 }}>🔍</div>
+            <p>No campaigns match your filters.</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── DONATION PAGE ──────────────────────────────────────────────────────────────
+function DonatePage({ campaign, setPage }) {
+  const [amount, setAmount] = useState(50);
+  const [customAmount, setCustomAmount] = useState("");
+  const [step, setStep] = useState(1);
+  const [payMethod, setPayMethod] = useState("card");
+  const [success, setSuccess] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  const presets = [10, 25, 50, 100, 250, 500];
+
+  const handleDonate = () => {
+    setLoading(true);
+    setTimeout(() => { setLoading(false); setSuccess(true); }, 2000);
+  };
+
+  if (!campaign) return null;
+
+  if (success) return (
+    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", paddingTop: 68 }}>
+      <motion.div
+        initial={{ scale: 0.8, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        transition={{ type: "spring", stiffness: 200, damping: 20 }}
+        style={{
+          textAlign: "center", padding: "60px 40px", maxWidth: 480,
+          background: "linear-gradient(135deg, rgba(16,185,129,0.08), rgba(10,22,40,0.9))",
+          border: "1px solid rgba(16,185,129,0.2)", borderRadius: 20,
+        }}
+      >
+        <div style={{ fontSize: 64, marginBottom: 24 }}>✅</div>
+        <h2 className="serif" style={{ fontSize: 32, fontWeight: 700, marginBottom: 12 }}>Donation Confirmed!</h2>
+        <p style={{ color: "#8BA4C4", lineHeight: 1.7, marginBottom: 12 }}>
+          Your donation of <strong style={{ color: "#10B981" }}>${customAmount || amount}</strong> to <strong>{campaign.title}</strong> has been processed.
+        </p>
+        <p style={{ fontSize: 12, color: "#6B7280", marginBottom: 32 }}>A receipt has been sent to your email. Transaction ID: TXN-{Math.random().toString(36).substr(2, 8).toUpperCase()}</p>
+        <button
+          className="glow-btn"
+          onClick={() => setPage("campaigns")}
+          style={{ background: "linear-gradient(135deg,#10B981,#059669)", border: "none", color: "#fff", padding: "12px 28px", borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" }}
+        >View All Campaigns</button>
+      </motion.div>
+    </div>
+  );
+
+  const pct = Math.round((campaign.raised / campaign.goal) * 100);
+
+  return (
+    <div style={{ minHeight: "100vh", paddingTop: 88 }}>
+      <div style={{ maxWidth: 900, margin: "0 auto", padding: "40px 24px 80px", display: "grid", gridTemplateColumns: "1fr 380px", gap: 32 }}>
+        {/* Campaign Summary */}
+        <div>
+          <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }}>
+            <button onClick={() => setPage("campaigns")} style={{ background: "none", border: "none", color: "#8BA4C4", cursor: "pointer", fontSize: 14, marginBottom: 24, fontFamily: "'DM Sans', sans-serif" }}>← Back to Campaigns</button>
+
+            <div style={{ background: "linear-gradient(135deg, rgba(19,40,71,0.9), rgba(13,31,60,0.9))", border: "1px solid rgba(59,130,246,0.1)", borderRadius: 16, overflow: "hidden" }}>
+              <div style={{ height: 200, background: "linear-gradient(135deg, rgba(30,95,181,0.3), rgba(10,22,40,0.8))", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 80 }}>
+                {campaign.image}
+              </div>
+              <div style={{ padding: 24 }}>
+                <span className="verified-badge" style={{ marginBottom: 12, display: "inline-flex" }}>✓ VERIFIED NGO</span>
+                <h2 className="serif" style={{ fontSize: 24, fontWeight: 700, marginBottom: 8, marginTop: 12 }}>{campaign.title}</h2>
+                <p style={{ fontSize: 13, color: "#8BA4C4", marginBottom: 20 }}>by {campaign.org} · {campaign.country}</p>
+
+                <div style={{ marginBottom: 8 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+                    <span style={{ fontSize: 20, fontWeight: 700, color: "#10B981" }}>${(campaign.raised/1000000).toFixed(2)}M</span>
+                    <span style={{ color: "#8BA4C4" }}>of ${(campaign.goal/1000000).toFixed(1)}M goal</span>
+                  </div>
+                  <div style={{ height: 8, background: "rgba(255,255,255,0.06)", borderRadius: 999, overflow: "hidden" }}>
+                    <motion.div className="progress-bar-fill" initial={{ width: 0 }} animate={{ width: `${pct}%` }} transition={{ duration: 1.5 }} />
+                  </div>
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16, marginTop: 20, padding: "16px 0", borderTop: "1px solid rgba(59,130,246,0.08)" }}>
+                  {[["Donors", campaign.donors.toLocaleString()], ["Days Left", campaign.days], ["Funded", `${pct}%`]].map(([k, v]) => (
+                    <div key={k} style={{ textAlign: "center" }}>
+                      <div style={{ fontSize: 20, fontWeight: 700, color: "#F8FAFF" }}>{v}</div>
+                      <div style={{ fontSize: 11, color: "#8BA4C4", marginTop: 2 }}>{k}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Transparency Note */}
+            <div style={{ marginTop: 20, padding: 16, background: "rgba(16,185,129,0.05)", border: "1px solid rgba(16,185,129,0.12)", borderRadius: 12 }}>
+              <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+                <span style={{ fontSize: 20 }}>🔍</span>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Full Transparency Guaranteed</div>
+                  <div style={{ fontSize: 12, color: "#8BA4C4", lineHeight: 1.6 }}>
+                    This NGO has been verified. All funds are tracked on our public ledger. You can view real-time allocation after donation.
+                  </div>
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        </div>
+
+        {/* Donation Form */}
+        <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.1 }}>
+          <div style={{ background: "linear-gradient(135deg, rgba(19,40,71,0.95), rgba(13,31,60,0.95))", border: "1px solid rgba(59,130,246,0.15)", borderRadius: 16, padding: 28, position: "sticky", top: 88 }}>
+            <h3 style={{ fontSize: 20, fontWeight: 700, marginBottom: 24, letterSpacing: "-0.01em" }}>Make a Donation</h3>
+
+            {/* Amount Presets */}
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ fontSize: 13, color: "#8BA4C4", marginBottom: 12, fontWeight: 500 }}>Select Amount (USD)</div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
+                {presets.map(p => (
+                  <button
+                    key={p}
+                    onClick={() => { setAmount(p); setCustomAmount(""); }}
+                    style={{
+                      background: amount === p && !customAmount ? "rgba(16,185,129,0.15)" : "rgba(10,22,40,0.6)",
+                      border: `1px solid ${amount === p && !customAmount ? "rgba(16,185,129,0.4)" : "rgba(59,130,246,0.15)"}`,
+                      color: amount === p && !customAmount ? "#10B981" : "#8BA4C4",
+                      padding: "10px 0", borderRadius: 8,
+                      fontSize: 14, fontWeight: 600, cursor: "pointer",
+                      fontFamily: "'DM Sans', sans-serif",
+                      transition: "all 0.2s",
+                    }}
+                  >${p}</button>
+                ))}
+              </div>
+              <input
+                type="number" placeholder="Custom amount"
+                value={customAmount} onChange={e => { setCustomAmount(e.target.value); setAmount(null); }}
+                style={{ width: "100%", marginTop: 8 }}
+              />
+            </div>
+
+            {/* Payment Method */}
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ fontSize: 13, color: "#8BA4C4", marginBottom: 12, fontWeight: 500 }}>Payment Method</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                {["card", "paypal"].map(m => (
+                  <button
+                    key={m}
+                    onClick={() => setPayMethod(m)}
+                    style={{
+                      flex: 1, padding: "10px 0",
+                      background: payMethod === m ? "rgba(59,130,246,0.1)" : "rgba(10,22,40,0.6)",
+                      border: `1px solid ${payMethod === m ? "rgba(59,130,246,0.4)" : "rgba(59,130,246,0.1)"}`,
+                      color: payMethod === m ? "#F8FAFF" : "#8BA4C4",
+                      borderRadius: 8, fontSize: 13, fontWeight: 500, cursor: "pointer",
+                      fontFamily: "'DM Sans', sans-serif",
+                    }}
+                  >{m === "card" ? "💳 Card" : "🅿 PayPal"}</button>
+                ))}
+              </div>
+            </div>
+
+            {payMethod === "card" && (
+              <div style={{ marginBottom: 20 }}>
+                <input type="text" placeholder="Card number" style={{ width: "100%", marginBottom: 8 }} />
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                  <input type="text" placeholder="MM/YY" />
+                  <input type="text" placeholder="CVC" />
+                </div>
+                <input type="text" placeholder="Name on card" style={{ width: "100%", marginTop: 8 }} />
+              </div>
+            )}
+
+            {/* Summary */}
+            <div style={{ padding: "14px 16px", background: "rgba(10,22,40,0.5)", borderRadius: 10, marginBottom: 16, border: "1px solid rgba(59,130,246,0.08)" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: "#8BA4C4", marginBottom: 6 }}>
+                <span>Donation amount</span>
+                <span>${customAmount || amount || "0"}</span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: "#8BA4C4", marginBottom: 10 }}>
+                <span>Platform fee</span>
+                <span style={{ color: "#10B981" }}>$0 (Free)</span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 15, fontWeight: 700 }}>
+                <span>Total</span>
+                <span style={{ color: "#10B981" }}>${customAmount || amount || "0"}</span>
+              </div>
+            </div>
+
+            <button
+              className="glow-btn"
+              onClick={handleDonate}
+              disabled={loading}
+              style={{
+                width: "100%",
+                background: loading ? "rgba(16,185,129,0.3)" : "linear-gradient(135deg, #10B981, #059669)",
+                border: "none", color: "#fff",
+                padding: "14px 0", borderRadius: 10,
+                fontSize: 15, fontWeight: 700, cursor: loading ? "not-allowed" : "pointer",
+                fontFamily: "'DM Sans', sans-serif",
+                transition: "all 0.2s",
+              }}
+            >{loading ? "Processing..." : `Donate $${customAmount || amount || "0"} Now`}</button>
+
+            <p style={{ fontSize: 11, color: "#6B7280", textAlign: "center", marginTop: 12, lineHeight: 1.6 }}>
+              🔒 Secured by Stripe. SSL encrypted. Your payment info is never stored.
+            </p>
+          </div>
+        </motion.div>
+      </div>
+    </div>
+  );
+}
+
+// ─── TRANSPARENCY DASHBOARD ─────────────────────────────────────────────────────
+function TransparencyPage() {
+  const CustomTooltip = ({ active, payload, label }) => {
+    if (!active || !payload?.length) return null;
+    return (
+      <div style={{ background: "rgba(13,31,60,0.95)", border: "1px solid rgba(59,130,246,0.2)", padding: "10px 14px", borderRadius: 8, fontSize: 12 }}>
+        <p style={{ color: "#8BA4C4", marginBottom: 4 }}>{label}</p>
+        {payload.map((p, i) => (
+          <p key={i} style={{ color: p.color, fontWeight: 600 }}>{p.name}: {typeof p.value === "number" && p.value > 100 ? `$${p.value}M` : p.value}</p>
+        ))}
+      </div>
+    );
+  };
+
+  return (
+    <div style={{ minHeight: "100vh", paddingTop: 88 }}>
+      <div style={{ maxWidth: 1280, margin: "0 auto", padding: "40px 24px 80px" }}>
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
+            <div style={{ fontSize: 12, color: "#10B981", letterSpacing: "0.12em", fontWeight: 600 }}>LIVE ANALYTICS</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, background: "rgba(16,185,129,0.08)", border: "1px solid rgba(16,185,129,0.2)", padding: "3px 10px", borderRadius: 999 }}>
+              <span style={{ width: 5, height: 5, borderRadius: "50%", background: "#10B981", display: "inline-block" }} />
+              <span style={{ fontSize: 11, color: "#34D399" }}>LIVE</span>
+            </div>
+          </div>
+          <h1 className="serif" style={{ fontSize: 44, fontWeight: 800, letterSpacing: "-0.03em", marginBottom: 8 }}>Transparency Dashboard</h1>
+          <p style={{ color: "#8BA4C4", fontSize: 16 }}>Full financial visibility into every dollar raised, allocated, and deployed.</p>
+        </motion.div>
+
+        {/* Top KPIs */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}
+          style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 16, marginTop: 36 }}
+        >
+          {[
+            { label: "Total Funds Raised", value: 134200000, format: v => `$${(v/1000000).toFixed(1)}M`, icon: "💰", change: "+12.4% MoM" },
+            { label: "Active Campaigns", value: 94, format: v => v, icon: "🎯", change: "+6 this month" },
+            { label: "Verified NGOs", value: 186, format: v => v, icon: "✅", change: "+14 this quarter" },
+            { label: "Countries Impacted", value: 47, format: v => v, icon: "🌍", change: "+3 new regions" },
+            { label: "Total Donors", value: 112400, format: v => `${(v/1000).toFixed(1)}K`, icon: "👥", change: "+8.2% MoM" },
+            { label: "Admin Cost Ratio", value: 2.4, format: v => `${v}%`, icon: "📊", change: "Industry: 12%" },
+          ].map((stat, i) => (
+            <motion.div
+              key={i}
+              className="stat-card card-hover"
+              initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 * i }}
+              style={{ padding: "22px 20px", borderRadius: 14 }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 }}>
+                <span style={{ fontSize: 24 }}>{stat.icon}</span>
+                <span style={{ fontSize: 10, color: "#10B981", background: "rgba(16,185,129,0.08)", padding: "3px 8px", borderRadius: 999, letterSpacing: "0.03em" }}>{stat.change}</span>
+              </div>
+              <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "'DM Mono', monospace", letterSpacing: "-0.02em", marginBottom: 4 }}>
+                <AnimatedCounter target={stat.value} />
+              </div>
+              <div style={{ fontSize: 12, color: "#8BA4C4" }}>{stat.label}</div>
+            </motion.div>
+          ))}
+        </motion.div>
+
+        {/* Charts */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: 24, marginTop: 32 }}>
+          {/* Line Chart */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }}
+            className="stat-card"
+            style={{ padding: 28, borderRadius: 14 }}
+          >
+            <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 4 }}>Cumulative Funds Raised</h3>
+            <p style={{ fontSize: 12, color: "#8BA4C4", marginBottom: 24 }}>Monthly growth across all campaigns (2024)</p>
+            <ResponsiveContainer width="100%" height={260}>
+              <AreaChart data={growthData}>
+                <defs>
+                  <linearGradient id="fundGradient" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#3B82F6" stopOpacity={0.3} />
+                    <stop offset="95%" stopColor="#3B82F6" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <XAxis dataKey="month" tick={{ fill: "#8BA4C4", fontSize: 11 }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fill: "#8BA4C4", fontSize: 11 }} axisLine={false} tickLine={false} />
+                <Tooltip content={<CustomTooltip />} />
+                <Area type="monotone" dataKey="funds" name="Funds ($M)" stroke="#3B82F6" fill="url(#fundGradient)" strokeWidth={2} dot={false} />
+              </AreaChart>
+            </ResponsiveContainer>
+          </motion.div>
+
+          {/* Pie Chart */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.35 }}
+            className="stat-card"
+            style={{ padding: 28, borderRadius: 14 }}
+          >
+            <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 4 }}>Fund Allocation</h3>
+            <p style={{ fontSize: 12, color: "#8BA4C4", marginBottom: 20 }}>Breakdown by category</p>
+            <ResponsiveContainer width="100%" height={180}>
+              <PieChart>
+                <Pie data={allocationData} cx="50%" cy="50%" innerRadius={50} outerRadius={80} dataKey="value" paddingAngle={3}>
+                  {allocationData.map((entry, i) => <Cell key={i} fill={entry.color} />)}
+                </Pie>
+                <Tooltip formatter={(v) => `${v}%`} contentStyle={{ background: "rgba(13,31,60,0.95)", border: "1px solid rgba(59,130,246,0.2)", borderRadius: 8, fontSize: 12 }} />
+              </PieChart>
+            </ResponsiveContainer>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 8 }}>
+              {allocationData.map((d, i) => (
+                <div key={i} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <div style={{ width: 10, height: 10, borderRadius: 2, background: d.color, flexShrink: 0 }} />
+                  <div style={{ flex: 1, fontSize: 12, color: "#8BA4C4" }}>{d.name}</div>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: "#F8FAFF" }}>{d.value}%</div>
+                </div>
+              ))}
+            </div>
+          </motion.div>
+        </div>
+
+        {/* Live Transactions */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.45 }}
+          className="stat-card"
+          style={{ padding: 28, borderRadius: 14, marginTop: 24 }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
+            <div>
+              <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 4 }}>Live Transactions</h3>
+              <p style={{ fontSize: 12, color: "#8BA4C4" }}>Real-time donation ledger</p>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, background: "rgba(16,185,129,0.08)", border: "1px solid rgba(16,185,129,0.2)", padding: "5px 12px", borderRadius: 999 }}>
+              <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#10B981", display: "inline-block" }} />
+              <span style={{ fontSize: 11, color: "#34D399", fontWeight: 600 }}>LIVE</span>
+            </div>
+          </div>
+
+          <div style={{ borderRadius: 10, overflow: "hidden", border: "1px solid rgba(59,130,246,0.08)" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "120px 1fr 1fr 100px 80px", padding: "10px 16px", background: "rgba(10,22,40,0.4)", fontSize: 11, color: "#8BA4C4", letterSpacing: "0.05em", textTransform: "uppercase", fontWeight: 600 }}>
+              <span>TX ID</span><span>Donor</span><span>Campaign</span><span>Amount</span><span>Time</span>
+            </div>
+            {recentTransactions.map((tx, i) => (
+              <motion.div
+                key={tx.id}
+                initial={{ opacity: 0, x: -10 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: 0.1 * i }}
+                style={{
+                  display: "grid", gridTemplateColumns: "120px 1fr 1fr 100px 80px",
+                  padding: "14px 16px",
+                  borderTop: "1px solid rgba(59,130,246,0.06)",
+                  fontSize: 13,
+                  background: i % 2 === 0 ? "transparent" : "rgba(10,22,40,0.2)",
+                  transition: "background 0.2s",
+                  cursor: "default",
+                }}
+                onMouseEnter={e => e.currentTarget.style.background = "rgba(59,130,246,0.04)"}
+                onMouseLeave={e => e.currentTarget.style.background = i % 2 === 0 ? "transparent" : "rgba(10,22,40,0.2)"}
+              >
+                <span className="mono" style={{ color: "#3B82F6", fontSize: 11 }}>{tx.id}</span>
+                <span style={{ color: "#F8FAFF" }}>{tx.donor}</span>
+                <span style={{ color: "#8BA4C4" }}>{tx.campaign}</span>
+                <span style={{ color: "#10B981", fontWeight: 600 }}>{tx.amount}</span>
+                <span style={{ color: "#6B7280", fontSize: 11 }}>{tx.time}</span>
+              </motion.div>
+            ))}
+          </div>
+        </motion.div>
+      </div>
+    </div>
+  );
+}
+
+// ─── HOW IT WORKS ───────────────────────────────────────────────────────────────
+function HowItWorksPage() {
+  const steps = [
+    {
+      num: "01",
+      title: "NGO Verification",
+      desc: "Organizations apply with legal registration documents, financial statements, and governance records. Our compliance team conducts thorough due diligence within 72 hours.",
+      icon: "🏛️",
+      detail: ["Legal registration review", "Financial audit check", "Governance structure assessment", "Background verification", "Ongoing compliance monitoring"]
+    },
+    {
+      num: "02",
+      title: "Secure Donations",
+      desc: "Donors contribute through PCI-DSS compliant payment infrastructure. Every transaction is encrypted, idempotency-protected, and immediately logged on our public ledger.",
+      icon: "🔐",
+      detail: ["Stripe PCI-DSS compliant", "SSL/TLS encryption", "Fraud detection", "Idempotency keys", "Instant receipts"]
+    },
+    {
+      num: "03",
+      title: "Real-Time Impact",
+      desc: "Funds are disbursed directly to verified NGO accounts. Every allocation is tracked and published on the public transparency dashboard within 24 hours.",
+      icon: "📊",
+      detail: ["Direct NGO disbursement", "Public fund tracking", "Impact report uploads", "Beneficiary verification", "Quarterly audits"]
+    },
+  ];
+
+  return (
+    <div style={{ minHeight: "100vh", paddingTop: 88 }}>
+      <div style={{ maxWidth: 1280, margin: "0 auto", padding: "60px 24px 100px" }}>
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} style={{ textAlign: "center", maxWidth: 640, margin: "0 auto 80px" }}>
+          <div style={{ fontSize: 12, color: "#10B981", letterSpacing: "0.12em", fontWeight: 600, marginBottom: 12 }}>THE PROCESS</div>
+          <h1 className="serif" style={{ fontSize: 48, fontWeight: 800, letterSpacing: "-0.03em", marginBottom: 16 }}>How GHRN Works</h1>
+          <p style={{ color: "#8BA4C4", fontSize: 17, lineHeight: 1.7 }}>
+            A rigorous three-stage process that ensures every dollar reaches its destination with full accountability.
+          </p>
+        </motion.div>
+
+        {/* Steps */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 32 }}>
+          {steps.map((step, i) => (
+            <motion.div
+              key={i}
+              initial={{ opacity: 0, y: 40 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true }}
+              transition={{ delay: i * 0.15, duration: 0.7, ease: [0.4, 0, 0.2, 1] }}
+              className="card-hover"
+              style={{
+                background: "linear-gradient(135deg, rgba(19,40,71,0.9), rgba(13,31,60,0.9))",
+                border: "1px solid rgba(59,130,246,0.1)",
+                borderRadius: 20, padding: 36,
+                position: "relative", overflow: "hidden",
+              }}
+            >
+              <div style={{ position: "absolute", top: 20, right: 20, fontSize: 64, opacity: 0.04, fontFamily: "'Playfair Display', serif", fontWeight: 900 }}>{step.num}</div>
+
+              <div style={{ width: 56, height: 56, background: "rgba(59,130,246,0.1)", borderRadius: 16, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 26, marginBottom: 24 }}>
+                {step.icon}
+              </div>
+
+              <div style={{ fontSize: 12, color: "#3B82F6", letterSpacing: "0.1em", fontWeight: 600, marginBottom: 10 }}>STEP {step.num}</div>
+              <h2 className="serif" style={{ fontSize: 26, fontWeight: 700, marginBottom: 14 }}>{step.title}</h2>
+              <p style={{ color: "#8BA4C4", lineHeight: 1.7, marginBottom: 24, fontSize: 14 }}>{step.desc}</p>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {step.detail.map((d, j) => (
+                  <div key={j} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <span style={{ color: "#10B981", fontSize: 12 }}>✓</span>
+                    <span style={{ fontSize: 13, color: "#8BA4C4" }}>{d}</span>
+                  </div>
+                ))}
+              </div>
+            </motion.div>
+          ))}
+        </div>
+
+        {/* Compliance Section */}
+        <motion.div
+          initial={{ opacity: 0, y: 30 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true }}
+          style={{
+            marginTop: 60, padding: 40,
+            background: "linear-gradient(135deg, rgba(16,185,129,0.05), rgba(10,22,40,0.8))",
+            border: "1px solid rgba(16,185,129,0.12)", borderRadius: 20,
+          }}
+        >
+          <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 24, alignItems: "center" }}>
+            <div>
+              <h3 className="serif" style={{ fontSize: 28, fontWeight: 700, marginBottom: 12 }}>Compliance & Governance Framework</h3>
+              <p style={{ color: "#8BA4C4", lineHeight: 1.7, maxWidth: 600 }}>
+                GHRN operates under a rigorous compliance framework aligned with international humanitarian aid standards,
+                including FATF AML guidelines, GDPR data protection, and PCI DSS payment security.
+              </p>
+              <div style={{ display: "flex", gap: 16, marginTop: 20, flexWrap: "wrap" }}>
+                {["FATF Compliant", "GDPR Ready", "PCI DSS", "ISO 27001", "SOC 2 Type II"].map(b => (
+                  <span key={b} style={{ fontSize: 11, fontWeight: 700, color: "#8BA4C4", background: "rgba(59,130,246,0.08)", border: "1px solid rgba(59,130,246,0.15)", padding: "5px 12px", borderRadius: 999, letterSpacing: "0.04em" }}>{b}</span>
+                ))}
+              </div>
+            </div>
+            <div style={{ fontSize: 60, opacity: 0.3 }}>🛡️</div>
+          </div>
+        </motion.div>
+      </div>
+    </div>
+  );
+}
+
+// ─── NGO APPLICATION PAGE ────────────────────────────────────────────────────────
+function NGOApplyPage() {
+  const [step, setStep] = useState(1);
+  const [submitted, setSubmitted] = useState(false);
+
+  const handleSubmit = () => setSubmitted(true);
+
+  if (submitted) return (
+    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", paddingTop: 68 }}>
+      <motion.div
+        initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
+        transition={{ type: "spring", stiffness: 200, damping: 20 }}
+        style={{ textAlign: "center", padding: "60px 40px", maxWidth: 500, background: "linear-gradient(135deg, rgba(59,130,246,0.08), rgba(10,22,40,0.9))", border: "1px solid rgba(59,130,246,0.2)", borderRadius: 20 }}
+      >
+        <div style={{ fontSize: 64, marginBottom: 24 }}>📋</div>
+        <h2 className="serif" style={{ fontSize: 32, fontWeight: 700, marginBottom: 12 }}>Application Submitted!</h2>
+        <p style={{ color: "#8BA4C4", lineHeight: 1.7 }}>
+          Your NGO application is under review. Our compliance team will respond within <strong style={{ color: "#3B82F6" }}>72 business hours</strong>. Reference ID: NGO-{Math.random().toString(36).substr(2, 8).toUpperCase()}
+        </p>
+      </motion.div>
+    </div>
+  );
+
+  return (
+    <div style={{ minHeight: "100vh", paddingTop: 88 }}>
+      <div style={{ maxWidth: 760, margin: "0 auto", padding: "40px 24px 80px" }}>
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} style={{ marginBottom: 40 }}>
+          <div style={{ fontSize: 12, color: "#10B981", letterSpacing: "0.12em", fontWeight: 600, marginBottom: 12 }}>NGO REGISTRATION</div>
+          <h1 className="serif" style={{ fontSize: 44, fontWeight: 800, letterSpacing: "-0.03em", marginBottom: 8 }}>Apply as an NGO</h1>
+          <p style={{ color: "#8BA4C4", fontSize: 16 }}>Join 186+ verified organizations creating transparent impact worldwide.</p>
+        </motion.div>
+
+        {/* Progress Steps */}
+        <div style={{ display: "flex", gap: 0, marginBottom: 40 }}>
+          {["Organization", "Financial", "Documents", "Review"].map((s, i) => (
+            <div key={i} style={{ flex: 1, display: "flex", alignItems: "center" }}>
+              <div style={{
+                width: 28, height: 28, borderRadius: "50%",
+                background: step > i + 1 ? "#10B981" : step === i + 1 ? "#3B82F6" : "rgba(59,130,246,0.1)",
+                border: `2px solid ${step >= i + 1 ? "transparent" : "rgba(59,130,246,0.2)"}`,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                fontSize: 11, fontWeight: 700, color: "#fff", flexShrink: 0,
+                transition: "all 0.3s",
+              }}>{step > i + 1 ? "✓" : i + 1}</div>
+              <div style={{ flex: 1, height: 2, background: step > i + 1 ? "#10B981" : "rgba(59,130,246,0.1)", transition: "background 0.3s", display: i === 3 ? "none" : "block" }} />
+            </div>
+          ))}
+        </div>
+
+        <motion.div
+          key={step}
+          initial={{ opacity: 0, x: 20 }}
+          animate={{ opacity: 1, x: 0 }}
+          style={{ background: "linear-gradient(135deg, rgba(19,40,71,0.9), rgba(13,31,60,0.9))", border: "1px solid rgba(59,130,246,0.1)", borderRadius: 16, padding: 36 }}
+        >
+          {step === 1 && (
+            <div>
+              <h3 style={{ fontSize: 20, fontWeight: 700, marginBottom: 24 }}>Organization Details</h3>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
+                <div>
+                  <label style={{ fontSize: 12, color: "#8BA4C4", display: "block", marginBottom: 6 }}>Organization Name *</label>
+                  <input type="text" placeholder="e.g. Global Aid Foundation" style={{ width: "100%" }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 12, color: "#8BA4C4", display: "block", marginBottom: 6 }}>Registration Number *</label>
+                  <input type="text" placeholder="e.g. NGO-123456" style={{ width: "100%" }} />
+                </div>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
+                <div>
+                  <label style={{ fontSize: 12, color: "#8BA4C4", display: "block", marginBottom: 6 }}>Country of Registration *</label>
+                  <select style={{ width: "100%" }}>
+                    <option>Select country...</option>
+                    <option>United States</option>
+                    <option>United Kingdom</option>
+                    <option>Germany</option>
+                    <option>France</option>
+                    <option>Canada</option>
+                  </select>
+                </div>
+                <div>
+                  <label style={{ fontSize: 12, color: "#8BA4C4", display: "block", marginBottom: 6 }}>Category *</label>
+                  <select style={{ width: "100%" }}>
+                    <option>Select category...</option>
+                    <option>Medical Aid</option>
+                    <option>Food Security</option>
+                    <option>Shelter</option>
+                    <option>Education</option>
+                    <option>Water & Sanitation</option>
+                  </select>
+                </div>
+              </div>
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ fontSize: 12, color: "#8BA4C4", display: "block", marginBottom: 6 }}>Registered Address *</label>
+                <input type="text" placeholder="Street address" style={{ width: "100%", marginBottom: 8 }} />
+              </div>
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ fontSize: 12, color: "#8BA4C4", display: "block", marginBottom: 6 }}>Contact Email *</label>
+                <input type="email" placeholder="director@yourorg.org" style={{ width: "100%" }} />
+              </div>
+              <textarea placeholder="Brief description of your organization's mission and operations..." style={{ width: "100%", height: 100, resize: "vertical" }} />
+            </div>
+          )}
+
+          {step === 2 && (
+            <div>
+              <h3 style={{ fontSize: 20, fontWeight: 700, marginBottom: 24 }}>Financial Information</h3>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
+                <div>
+                  <label style={{ fontSize: 12, color: "#8BA4C4", display: "block", marginBottom: 6 }}>Bank Name *</label>
+                  <input type="text" placeholder="e.g. Barclays" style={{ width: "100%" }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 12, color: "#8BA4C4", display: "block", marginBottom: 6 }}>Account Holder *</label>
+                  <input type="text" placeholder="Legal organization name" style={{ width: "100%" }} />
+                </div>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
+                <div>
+                  <label style={{ fontSize: 12, color: "#8BA4C4", display: "block", marginBottom: 6 }}>IBAN / Account Number *</label>
+                  <input type="text" placeholder="GB00 BARC..." style={{ width: "100%" }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 12, color: "#8BA4C4", display: "block", marginBottom: 6 }}>SWIFT / BIC Code *</label>
+                  <input type="text" placeholder="BARCGB22" style={{ width: "100%" }} />
+                </div>
+              </div>
+              <div style={{ padding: 16, background: "rgba(245,158,11,0.05)", border: "1px solid rgba(245,158,11,0.15)", borderRadius: 10, marginTop: 8 }}>
+                <p style={{ fontSize: 12, color: "#F59E0B", lineHeight: 1.6 }}>
+                  ⚠️ Bank details will be verified via micro-deposit confirmation before approval. All financial data is encrypted at rest and in transit.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {step === 3 && (
+            <div>
+              <h3 style={{ fontSize: 20, fontWeight: 700, marginBottom: 24 }}>Required Documents</h3>
+              {[
+                { title: "Certificate of Registration", desc: "Official government-issued NGO registration certificate (PDF)" },
+                { title: "Audited Financial Statements", desc: "Last 2 years, signed by a certified auditor (PDF)" },
+                { title: "Board of Directors List", desc: "Names, roles, and ID copies (PDF)" },
+                { title: "AML/KYC Policy Document", desc: "Your organization's anti-money laundering policy (PDF)" },
+              ].map((doc, i) => (
+                <div key={i} style={{ padding: 16, background: "rgba(10,22,40,0.4)", border: "1px solid rgba(59,130,246,0.1)", borderRadius: 10, marginBottom: 12 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div>
+                      <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>{doc.title}</div>
+                      <div style={{ fontSize: 12, color: "#8BA4C4" }}>{doc.desc}</div>
+                    </div>
+                    <button style={{ background: "rgba(59,130,246,0.1)", border: "1px solid rgba(59,130,246,0.2)", color: "#3B82F6", padding: "7px 16px", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", whiteSpace: "nowrap", marginLeft: 16 }}>
+                      Upload PDF
+                    </button>
+                  </div>
+                </div>
+              ))}
+              <div style={{ display: "flex", gap: 10, alignItems: "flex-start", marginTop: 16 }}>
+                <input type="checkbox" style={{ width: 16, height: 16, marginTop: 2 }} />
+                <span style={{ fontSize: 13, color: "#8BA4C4", lineHeight: 1.6 }}>
+                  I certify that all information provided is accurate and complete. I agree to GHRN's Terms of Service, Compliance Policy, and NGO Code of Conduct.
+                </span>
+              </div>
+            </div>
+          )}
+
+          {step === 4 && (
+            <div>
+              <h3 style={{ fontSize: 20, fontWeight: 700, marginBottom: 24 }}>Review & Submit</h3>
+              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                {[
+                  ["Organization", "Global Aid Foundation"],
+                  ["Registration #", "NGO-DEMO-001"],
+                  ["Country", "United Kingdom"],
+                  ["Category", "Medical Aid"],
+                  ["Contact", "director@globalaid.org"],
+                  ["Documents", "4 of 4 uploaded ✓"],
+                ].map(([k, v]) => (
+                  <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "12px 16px", background: "rgba(10,22,40,0.4)", borderRadius: 8, fontSize: 14 }}>
+                    <span style={{ color: "#8BA4C4" }}>{k}</span>
+                    <span style={{ fontWeight: 500, color: "#F8FAFF" }}>{v}</span>
+                  </div>
+                ))}
+              </div>
+              <div style={{ marginTop: 20, padding: 16, background: "rgba(16,185,129,0.05)", border: "1px solid rgba(16,185,129,0.12)", borderRadius: 10 }}>
+                <p style={{ fontSize: 13, color: "#34D399", lineHeight: 1.6 }}>
+                  ✓ By submitting, you agree to a 72-hour compliance review. You'll receive email updates at each stage of the process.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Navigation */}
+          <div style={{ display: "flex", justifyContent: "space-between", marginTop: 28 }}>
+            {step > 1 ? (
+              <button onClick={() => setStep(s => s - 1)} style={{ background: "transparent", border: "1px solid rgba(59,130,246,0.2)", color: "#8BA4C4", padding: "10px 24px", borderRadius: 8, fontSize: 14, fontWeight: 500, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" }}>← Back</button>
+            ) : <div />}
+            {step < 4 ? (
+              <button onClick={() => setStep(s => s + 1)} className="glow-btn" style={{ background: "linear-gradient(135deg, #3B82F6, #1E5FB5)", border: "none", color: "#fff", padding: "10px 28px", borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" }}>Continue →</button>
+            ) : (
+              <button onClick={handleSubmit} className="glow-btn" style={{ background: "linear-gradient(135deg, #10B981, #059669)", border: "none", color: "#fff", padding: "10px 28px", borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" }}>Submit Application</button>
+            )}
+          </div>
+        </motion.div>
+      </div>
+    </div>
+  );
+}
+
+// ─── ABOUT PAGE ──────────────────────────────────────────────────────────────────
+function AboutPage() {
+  return (
+    <div style={{ minHeight: "100vh", paddingTop: 88 }}>
+      <div style={{ maxWidth: 1100, margin: "0 auto", padding: "60px 24px 100px" }}>
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} style={{ maxWidth: 700, marginBottom: 64 }}>
+          <div style={{ fontSize: 12, color: "#10B981", letterSpacing: "0.12em", fontWeight: 600, marginBottom: 12 }}>ABOUT GHRN</div>
+          <h1 className="serif" style={{ fontSize: 52, fontWeight: 900, letterSpacing: "-0.03em", lineHeight: 1.05, marginBottom: 20 }}>
+            Built on Trust.<br />Powered by Transparency.
+          </h1>
+          <p style={{ color: "#8BA4C4", fontSize: 17, lineHeight: 1.8 }}>
+            The Global Humanitarian Relief Network is purpose-built financial infrastructure for crisis funding — not a crowdfunding platform. We exist to bridge the trust gap between donors and humanitarian operations worldwide.
+          </p>
+        </motion.div>
+
+        {/* Values Grid */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 24, marginBottom: 60 }}>
+          {[
+            { icon: "🔍", title: "Radical Transparency", desc: "Every financial movement is published on our public ledger in real-time. No black boxes." },
+            { icon: "🛡️", title: "Compliance-First", desc: "We enforce FATF AML standards, KYC verification, and maintain full regulatory audit trails." },
+            { icon: "⚡", title: "Operational Efficiency", desc: "2.4% administrative cost ratio. Industry average is 12%. More money reaches those who need it." },
+            { icon: "🌐", title: "Global Infrastructure", desc: "Multi-currency, multi-region architecture. Supporting NGOs in 47 countries and counting." },
+          ].map((v, i) => (
+            <motion.div
+              key={i}
+              initial={{ opacity: 0, y: 30 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true }}
+              transition={{ delay: i * 0.1 }}
+              style={{
+                padding: 28, borderRadius: 16,
+                background: "linear-gradient(135deg, rgba(19,40,71,0.8), rgba(13,31,60,0.8))",
+                border: "1px solid rgba(59,130,246,0.1)",
+              }}
+            >
+              <div style={{ fontSize: 32, marginBottom: 16 }}>{v.icon}</div>
+              <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 10 }}>{v.title}</h3>
+              <p style={{ fontSize: 13, color: "#8BA4C4", lineHeight: 1.7 }}>{v.desc}</p>
+            </motion.div>
+          ))}
+        </div>
+
+        {/* Governance */}
+        <motion.div
+          initial={{ opacity: 0, y: 30 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true }}
+          style={{ padding: 40, background: "linear-gradient(135deg, rgba(19,40,71,0.9), rgba(13,31,60,0.9))", border: "1px solid rgba(59,130,246,0.1)", borderRadius: 20, marginBottom: 40 }}
+        >
+          <h2 className="serif" style={{ fontSize: 32, fontWeight: 700, marginBottom: 16 }}>Governance Structure</h2>
+          <p style={{ color: "#8BA4C4", lineHeight: 1.7, maxWidth: 700, marginBottom: 24 }}>
+            GHRN is governed by an independent board of humanitarian finance experts, compliance officers, and NGO representatives. No single entity controls disbursement decisions.
+          </p>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 16 }}>
+            {["Board of Directors", "Compliance Committee", "NGO Advisory Council", "Independent Auditors", "Risk Management Office"].map(b => (
+              <div key={b} style={{ padding: "12px 16px", background: "rgba(59,130,246,0.05)", border: "1px solid rgba(59,130,246,0.1)", borderRadius: 8, fontSize: 13, color: "#8BA4C4", display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ color: "#3B82F6" }}>◆</span> {b}
+              </div>
+            ))}
+          </div>
+        </motion.div>
+
+        {/* Legal */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true }}
+          style={{ padding: 32, background: "rgba(10,22,40,0.4)", border: "1px solid rgba(59,130,246,0.08)", borderRadius: 16 }}
+        >
+          <h3 style={{ fontSize: 18, fontWeight: 700, marginBottom: 12 }}>Legal Structure & Compliance</h3>
+          <p style={{ color: "#8BA4C4", fontSize: 14, lineHeight: 1.7 }}>
+            GHRN operates as a registered 501(c)(3) charitable organization in the United States, with operational entities in the UK, EU, and Singapore. We are subject to annual independent audits published on this platform. All financial operations comply with FATF Recommendations, the EU's AMLD6, and FinCEN BSA requirements.
+          </p>
+        </motion.div>
+      </div>
+    </div>
+  );
+}
+
+// ─── FEATURED CAMPAIGNS (Homepage section) ─────────────────────────────────────
+function FeaturedCampaigns({ setPage, setSelectedCampaign }) {
+  const featured = campaigns.slice(0, 3);
+  return (
+    <section style={{ padding: "100px 24px", background: "rgba(13,31,60,0.3)" }}>
+      <div style={{ maxWidth: 1280, margin: "0 auto" }}>
+        <motion.div initial={{ opacity: 0, y: 20 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 48, flexWrap: "wrap", gap: 20 }}>
+          <div>
+            <div style={{ fontSize: 12, color: "#10B981", letterSpacing: "0.12em", fontWeight: 600, marginBottom: 10 }}>URGENT CAMPAIGNS</div>
+            <h2 className="serif" style={{ fontSize: 40, fontWeight: 800, letterSpacing: "-0.03em" }}>Where Help Is Needed Now</h2>
+          </div>
+          <button onClick={() => setPage("campaigns")} style={{ background: "transparent", border: "1px solid rgba(59,130,246,0.2)", color: "#8BA4C4", padding: "10px 22px", borderRadius: 8, fontSize: 13, fontWeight: 500, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", transition: "all 0.2s" }}>View All Campaigns →</button>
+        </motion.div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 24 }}>
+          {featured.map((c, i) => {
+            const pct = Math.round((c.raised / c.goal) * 100);
+            return (
+              <motion.div
+                key={c.id}
+                initial={{ opacity: 0, y: 30 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true }}
+                transition={{ delay: i * 0.1 }}
+                className="card-hover"
+                onClick={() => { setSelectedCampaign(c); setPage("donate"); }}
+                style={{ background: "linear-gradient(135deg, rgba(19,40,71,0.9), rgba(13,31,60,0.9))", border: "1px solid rgba(59,130,246,0.1)", borderRadius: 16, overflow: "hidden", cursor: "pointer" }}
+              >
+                <div style={{ height: 140, background: "linear-gradient(135deg, rgba(30,95,181,0.3), rgba(10,22,40,0.8))", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 60, position: "relative" }}>
+                  {c.image}
+                  <div style={{ position: "absolute", top: 12, left: 12 }}><span className={`verified-badge urgency-${c.urgency}`} style={{ fontSize: 10 }}>{c.urgency.toUpperCase()}</span></div>
+                </div>
+                <div style={{ padding: "20px 20px 24px" }}>
+                  <div style={{ fontSize: 11, color: "#8BA4C4", marginBottom: 6 }}>{c.category} · {c.country}</div>
+                  <h3 style={{ fontSize: 16, fontWeight: 700, lineHeight: 1.3, marginBottom: 16 }}>{c.title}</h3>
+                  <div style={{ height: 5, background: "rgba(255,255,255,0.06)", borderRadius: 999, overflow: "hidden", marginBottom: 8 }}>
+                    <motion.div className="progress-bar-fill" initial={{ width: 0 }} whileInView={{ width: `${pct}%` }} transition={{ duration: 1.2, ease: [0.4,0,0.2,1] }} />
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
+                    <span style={{ color: "#10B981", fontWeight: 600 }}>${(c.raised/1000000).toFixed(1)}M raised</span>
+                    <span style={{ color: "#8BA4C4" }}>{pct}% funded</span>
+                  </div>
+                </div>
+              </motion.div>
+            );
+          })}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ─── HOMEPAGE ──────────────────────────────────────────────────────────────────
+function HomePage({ setPage, setSelectedCampaign }) {
+  return (
+    <div>
+      <HeroSection setPage={setPage} />
+      <FeaturedCampaigns setPage={setPage} setSelectedCampaign={setSelectedCampaign} />
+
+      {/* How It Works preview */}
+      <section style={{ padding: "100px 24px" }}>
+        <div style={{ maxWidth: 1280, margin: "0 auto" }}>
+          <motion.div initial={{ opacity: 0, y: 20 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} style={{ textAlign: "center", maxWidth: 600, margin: "0 auto 60px" }}>
+            <div style={{ fontSize: 12, color: "#10B981", letterSpacing: "0.12em", fontWeight: 600, marginBottom: 12 }}>THE PROCESS</div>
+            <h2 className="serif" style={{ fontSize: 40, fontWeight: 800, letterSpacing: "-0.03em", marginBottom: 14 }}>Accountable by Design</h2>
+            <p style={{ color: "#8BA4C4", lineHeight: 1.7 }}>Our platform architecture makes transparency the default, not the exception.</p>
+          </motion.div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 24 }}>
+            {[
+              { num: "01", icon: "🏛️", title: "NGO Verification", desc: "72-hour compliance review with document verification and AML checks." },
+              { num: "02", icon: "🔐", title: "Secure Donations", desc: "PCI-DSS payments with idempotency protection and real-time ledger logging." },
+              { num: "03", icon: "📊", title: "Live Impact Tracking", desc: "Every allocation published within 24 hours on the public dashboard." },
+            ].map((s, i) => (
+              <motion.div key={i} initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ delay: i * 0.12 }} style={{ padding: 32, background: "linear-gradient(135deg, rgba(19,40,71,0.8), rgba(13,31,60,0.8))", border: "1px solid rgba(59,130,246,0.1)", borderRadius: 16 }}>
+                <div style={{ fontSize: 36, marginBottom: 16 }}>{s.icon}</div>
+                <div style={{ fontSize: 11, color: "#3B82F6", letterSpacing: "0.1em", fontWeight: 600, marginBottom: 8 }}>STEP {s.num}</div>
+                <h3 style={{ fontSize: 18, fontWeight: 700, marginBottom: 10 }}>{s.title}</h3>
+                <p style={{ fontSize: 13, color: "#8BA4C4", lineHeight: 1.7 }}>{s.desc}</p>
+              </motion.div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Transparency Preview */}
+      <section style={{ padding: "80px 24px", background: "rgba(13,31,60,0.4)" }}>
+        <div style={{ maxWidth: 1280, margin: "0 auto" }}>
+          <motion.div initial={{ opacity: 0, y: 20 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 32 }}>
+            <div style={{ maxWidth: 480 }}>
+              <div style={{ fontSize: 12, color: "#10B981", letterSpacing: "0.12em", fontWeight: 600, marginBottom: 12 }}>TRANSPARENCY</div>
+              <h2 className="serif" style={{ fontSize: 38, fontWeight: 800, letterSpacing: "-0.03em", marginBottom: 16 }}>Every Dollar, Accounted For</h2>
+              <p style={{ color: "#8BA4C4", lineHeight: 1.7, marginBottom: 28 }}>Our public transparency dashboard gives anyone in the world a real-time view into how humanitarian funds are raised, allocated, and deployed.</p>
+              <button onClick={() => setPage("transparency")} className="glow-btn" style={{ background: "linear-gradient(135deg, #3B82F6, #1E5FB5)", border: "none", color: "#fff", padding: "12px 28px", borderRadius: 10, fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" }}>View Dashboard →</button>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, flex: "1 1 400px", maxWidth: 500 }}>
+              {[
+                { label: "Allocation Accuracy", value: "99.8%", icon: "🎯" },
+                { label: "Admin Cost Ratio", value: "2.4%", icon: "📉" },
+                { label: "Avg Disbursement", value: "<4hrs", icon: "⚡" },
+                { label: "Audit Score", value: "A+", icon: "🏆" },
+              ].map((stat, i) => (
+                <div key={i} style={{ padding: 20, background: "linear-gradient(135deg, rgba(19,40,71,0.8), rgba(13,31,60,0.8))", border: "1px solid rgba(59,130,246,0.1)", borderRadius: 14, textAlign: "center" }}>
+                  <div style={{ fontSize: 28, marginBottom: 8 }}>{stat.icon}</div>
+                  <div style={{ fontSize: 22, fontWeight: 700, fontFamily: "'DM Mono', monospace", marginBottom: 4 }}>{stat.value}</div>
+                  <div style={{ fontSize: 11, color: "#8BA4C4" }}>{stat.label}</div>
+                </div>
+              ))}
+            </div>
+          </motion.div>
+        </div>
+      </section>
+
+      {/* Footer CTA */}
+      <section style={{ padding: "100px 24px" }}>
+        <div style={{ maxWidth: 700, margin: "0 auto", textAlign: "center" }}>
+          <motion.div initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }}>
+            <div style={{ fontSize: 12, color: "#10B981", letterSpacing: "0.12em", fontWeight: 600, marginBottom: 16 }}>JOIN THE MOVEMENT</div>
+            <h2 className="serif" style={{ fontSize: 48, fontWeight: 900, letterSpacing: "-0.03em", lineHeight: 1.1, marginBottom: 20 }}>Ready to Make a Verified Impact?</h2>
+            <p style={{ color: "#8BA4C4", fontSize: 16, lineHeight: 1.7, marginBottom: 40 }}>Join over 112,000 donors who trust GHRN to deliver their contributions to those who need it most.</p>
+            <div style={{ display: "flex", gap: 16, justifyContent: "center", flexWrap: "wrap" }}>
+              <button className="glow-btn" onClick={() => setPage("campaigns")} style={{ background: "linear-gradient(135deg, #10B981, #059669)", border: "none", color: "#fff", padding: "14px 36px", borderRadius: 10, fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" }}>Donate Now</button>
+              <button onClick={() => setPage("ngo-apply")} style={{ background: "transparent", border: "1px solid rgba(59,130,246,0.3)", color: "#8BA4C4", padding: "14px 36px", borderRadius: 10, fontSize: 15, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" }}>Apply as NGO</button>
+            </div>
+          </motion.div>
+        </div>
+      </section>
+
+      {/* Footer */}
+      <footer style={{ borderTop: "1px solid rgba(59,130,246,0.08)", padding: "40px 24px", background: "rgba(10,22,40,0.8)" }}>
+        <div style={{ maxWidth: 1280, margin: "0 auto", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 20 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ width: 28, height: 28, background: "linear-gradient(135deg, #1E5FB5, #10B981)", borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14 }}>🌐</div>
+            <span style={{ fontSize: 14, color: "#8BA4C4" }}>Global Humanitarian Relief Network © 2025</span>
+          </div>
+          <div style={{ display: "flex", gap: 24 }}>
+            {["Privacy Policy", "Terms of Service", "Compliance", "Audit Reports", "Contact"].map(l => (
+              <span key={l} style={{ fontSize: 13, color: "#6B7280", cursor: "pointer", transition: "color 0.2s" }} onMouseEnter={e => e.target.style.color = "#8BA4C4"} onMouseLeave={e => e.target.style.color = "#6B7280"}>{l}</span>
+            ))}
+          </div>
+        </div>
+      </footer>
+    </div>
+  );
+}
+
+// ─── LOGIN PAGE ──────────────────────────────────────────────────────────────────
+function LoginPage({ setPage }) {
+  const [tab, setTab] = useState("signin");
+  return (
+    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "88px 24px 40px" }}>
+      <motion.div
+        initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }}
+        style={{ width: "100%", maxWidth: 420, background: "linear-gradient(135deg, rgba(19,40,71,0.95), rgba(13,31,60,0.95))", border: "1px solid rgba(59,130,246,0.15)", borderRadius: 20, padding: 40 }}
+      >
+        <div style={{ textAlign: "center", marginBottom: 32 }}>
+          <div style={{ width: 48, height: 48, background: "linear-gradient(135deg, #1E5FB5, #10B981)", borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, margin: "0 auto 16px" }}>🌐</div>
+          <h2 className="serif" style={{ fontSize: 26, fontWeight: 700 }}>Welcome Back</h2>
+          <p style={{ color: "#8BA4C4", fontSize: 14, marginTop: 6 }}>Access your GHRN account</p>
+        </div>
+
+        <div style={{ display: "flex", gap: 0, marginBottom: 28, background: "rgba(10,22,40,0.4)", borderRadius: 10, padding: 4 }}>
+          {["signin", "register"].map(t => (
+            <button key={t} onClick={() => setTab(t)} style={{ flex: 1, padding: "8px 0", borderRadius: 8, border: "none", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", background: tab === t ? "rgba(59,130,246,0.15)" : "transparent", color: tab === t ? "#F8FAFF" : "#8BA4C4", transition: "all 0.2s", borderColor: tab === t ? "rgba(59,130,246,0.3)" : "transparent", borderWidth: 1, borderStyle: "solid" }}>
+              {t === "signin" ? "Sign In" : "Register"}
+            </button>
+          ))}
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 20 }}>
+          {tab === "register" && <input type="text" placeholder="Full Name" style={{ width: "100%" }} />}
+          <input type="email" placeholder="Email address" style={{ width: "100%" }} />
+          <input type="password" placeholder="Password" style={{ width: "100%" }} />
+          {tab === "register" && (
+            <select style={{ width: "100%" }}>
+              <option value="">Account Type</option>
+              <option value="donor">Donor</option>
+              <option value="ngo">NGO Representative</option>
+            </select>
+          )}
+        </div>
+
+        <button className="glow-btn" style={{ width: "100%", background: "linear-gradient(135deg, #10B981, #059669)", border: "none", color: "#fff", padding: "13px 0", borderRadius: 10, fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", marginBottom: 16 }}>
+          {tab === "signin" ? "Sign In" : "Create Account"}
+        </button>
+
+        <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
+          <button style={{ flex: 1, background: "rgba(59,130,246,0.06)", border: "1px solid rgba(59,130,246,0.15)", color: "#8BA4C4", padding: "10px 0", borderRadius: 8, fontSize: 13, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" }}>G  Google</button>
+          <button style={{ flex: 1, background: "rgba(59,130,246,0.06)", border: "1px solid rgba(59,130,246,0.15)", color: "#8BA4C4", padding: "10px 0", borderRadius: 8, fontSize: 13, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" }}> Apple</button>
+        </div>
+
+        <p style={{ fontSize: 12, color: "#6B7280", textAlign: "center" }}>
+          🔒 Secured by JWT + OAuth. 2FA enforced for NGO/Admin accounts.
+        </p>
+      </motion.div>
+    </div>
+  );
+}
+
+// ─── APP ───────────────────────────────────────────────────────────────────────
+export default function App() {
+  const [page, setPage] = useState("home");
+  const [selectedCampaign, setSelectedCampaign] = useState(null);
+
+  const scrollRef = useRef(null);
+  useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTo({ top: 0, behavior: "smooth" });
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }, [page]);
+
+  return (
+    <div className="noise-overlay" style={{ minHeight: "100vh", background: COLORS.navy }}>
+      <GlobalStyles />
+      <Nav page={page} setPage={setPage} />
+
+      <AnimatePresence mode="wait">
+        <motion.div
+          key={page}
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -10 }}
+          transition={{ duration: 0.3, ease: [0.4, 0, 0.2, 1] }}
+        >
+          {page === "home" && <HomePage setPage={setPage} setSelectedCampaign={setSelectedCampaign} />}
+          {page === "campaigns" && <CampaignsPage setPage={setPage} setSelectedCampaign={setSelectedCampaign} />}
+          {page === "donate" && <DonatePage campaign={selectedCampaign} setPage={setPage} />}
+          {page === "transparency" && <TransparencyPage />}
+          {page === "howitworks" && <HowItWorksPage />}
+          {page === "about" && <AboutPage />}
+          {page === "ngo-apply" && <NGOApplyPage />}
+          {page === "login" && <LoginPage setPage={setPage} />}
+        </motion.div>
+      </AnimatePresence>
+    </div>
+  );
+}
